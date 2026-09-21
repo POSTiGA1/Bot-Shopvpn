@@ -12,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import bulk_gifts
+import global_switch
 import lottery_loop
 from states import AdminBulkGift, AdminSettingInput
 
@@ -582,6 +583,73 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
         await asyncio.to_thread(db.set_setting, "spam_limit", "35")
         await asyncio.to_thread(db.set_setting, "spam_window", "60")
         text, markup = await _spam_view("✅ تنظیمات ضداسپم به پیش‌فرض برگشت.")
+        await replace_admin_view(call, text, reply_markup=markup)
+        await call.answer("ذخیره شد.")
+
+    # ------------------------------------------------------------------
+    # سوئیچ سراسری ربات (خاموش/روشن کردن ربات برای کاربران عادی)
+    # ------------------------------------------------------------------
+
+    def _gswitch_snapshot():
+        enabled = str(db.get_setting(global_switch.SETTING_KEY, "1")).strip() != "0"
+        off_text = (db.get_setting(global_switch.TEXT_KEY, "") or "").strip() or global_switch.DEFAULT_OFF_TEXT
+        return enabled, off_text
+
+    async def _gswitch_view(note: str = ""):
+        enabled, off_text = await asyncio.to_thread(_gswitch_snapshot)
+        lines = []
+        if note:
+            lines += [note, ""]
+        lines += [
+            "🔌 سوئیچ سراسری ربات",
+            "",
+            "با خاموش کردن، ربات تلگرام برای همه‌ی کاربران عادی متوقف می‌شود و آن‌ها فقط پیام "
+            "«ربات غیرفعال است» را می‌بینند. ادمین‌ها همچنان به ربات و همین پنل دسترسی دارند. "
+            "مینی‌اپ و پنل وب تحت تأثیر این کلید نیستند.",
+            "",
+            f"وضعیت: {_on(enabled)}",
+            f"پیام نمایش‌داده‌شده به کاربران در حالت خاموش:\n{html.escape(off_text)}",
+        ]
+        if enabled:
+            rows = [[_btn("🔴 خاموش کردن ربات", "adm_gswitch_ask")]]
+        else:
+            rows = [[_btn("🟢 روشن کردن ربات", "adm_gswitch_on")]]
+        rows.append([_btn("⬅️ بازگشت", "adm_cat:management")])
+        return "\n".join(lines), _kb(rows)
+
+    @router.callback_query(F.data == "adm_gswitch")
+    async def cb_gswitch_menu(call: CallbackQuery, state: FSMContext):
+        if not senior_admin_only(call.from_user.id):
+            return await deny_mid(call)
+        await state.clear()
+        text, markup = await _gswitch_view()
+        await replace_admin_view(call, text, reply_markup=markup)
+        await call.answer()
+
+    @router.callback_query(F.data == "adm_gswitch_ask")
+    async def cb_gswitch_ask(call: CallbackQuery):
+        if not senior_admin_only(call.from_user.id):
+            return await deny_mid(call)
+        text = (
+            "⚠️ مطمئنی می‌خواهی ربات را خاموش کنی؟\n\n"
+            "از همین لحظه هیچ کاربر عادی نمی‌تواند خرید، تمدید یا هیچ کار دیگری در ربات انجام دهد. "
+            "هر وقت خواستی از همین صفحه دوباره روشنش کن."
+        )
+        markup = _kb([
+            [_btn("✅ بله، خاموش کن", "adm_gswitch_off")],
+            [_btn("❌ انصراف", "adm_gswitch")],
+        ])
+        await replace_admin_view(call, text, reply_markup=markup)
+        await call.answer()
+
+    @router.callback_query(F.data.in_({"adm_gswitch_off", "adm_gswitch_on"}))
+    async def cb_gswitch_set(call: CallbackQuery):
+        if not senior_admin_only(call.from_user.id):
+            return await deny_mid(call)
+        turn_on = call.data == "adm_gswitch_on"
+        await asyncio.to_thread(db.set_setting, global_switch.SETTING_KEY, "1" if turn_on else "0")
+        note = "🟢 ربات دوباره روشن شد." if turn_on else "🔴 ربات برای کاربران عادی خاموش شد."
+        text, markup = await _gswitch_view(note)
         await replace_admin_view(call, text, reply_markup=markup)
         await call.answer("ذخیره شد.")
 

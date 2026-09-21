@@ -7,7 +7,7 @@
 نمایش داده می‌شود. ادمین‌ها از این محدودیت معاف هستند تا بتوانند ربات را دوباره
 روشن کنند.
 
-خاموش/روشن کردن (فقط مالک ربات):
+خاموش/روشن کردن (مالک و مدیر کامل؛ از «پنل مدیریت ← گزارش و سیستم ← سوئیچ سراسری» هم می‌شود):
     /bot_off      خاموش کردن ربات برای همه‌ی کاربران عادی
     /bot_on       روشن کردن ربات
     /bot_status   نمایش وضعیت فعلی
@@ -68,11 +68,11 @@ class GlobalBotSwitchMiddleware(BaseMiddleware):
             return True
 
         try:
-            is_owner = await asyncio.to_thread(self.db.is_owner, user_id)
+            allowed = await asyncio.to_thread(self.db.is_senior_admin, user_id)
         except Exception:
-            is_owner = False
-        if not is_owner:
-            await event.answer("⛔️ فقط مالک ربات می‌تواند ربات را خاموش/روشن کند.")
+            allowed = False
+        if not allowed:
+            await event.answer("⛔️ فقط مالک و مدیر کامل می‌توانند ربات را خاموش/روشن کنند.")
             return True
 
         new_value = "0" if cmd == "bot_off" else "1"

@@ -1101,6 +1101,7 @@ ADMIN_PANEL_ITEMS = [
     ("adm_report_group", "📣 گروه گزارش تاپیک‌دار", "adm_report_group"),
     ("adm_bulk_gift", "🎁 هدیه‌ی گروهی", "adm_bulk_gift"),
     ("adm_spam_settings", "🛡 ضداسپم کاربران", "adm_spam_settings"),
+    ("adm_gswitch", "🔌 سوئیچ سراسری ربات (خاموش/روشن)", "adm_gswitch"),
     ("adm_temp_message", "⏳ پیام موقت (خودحذف‌شونده)", "adm_temp_message"),
     ("adm_set_support_contact", "🆔 آیدی مدیر برای چت مستقیم", "adm_set_support_contact"),
     ("adm_ai_support_settings", "🤖 دستیار هوشمند (سوالات متداول)", "adm_ai_support_settings"),
@@ -1201,6 +1202,7 @@ ADMIN_PANEL_CATEGORIES = [
         "adm_buyflow_colors_menu",
     ]),
     ("management", "📊 گزارش و سیستم", [
+        "adm_gswitch",
         "adm_stats",
         "adm_backup_menu",
         "adm_report_group",
