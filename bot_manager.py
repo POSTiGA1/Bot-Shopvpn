@@ -43,7 +43,7 @@ from cleanup_loop import cleanup_loop
 from lottery_loop import lottery_loop
 from report_router import ReportGroupGuardMiddleware
 from global_switch import GlobalBotSwitchMiddleware
-from phone_auth import PhoneAuthMiddleware
+# from phone_auth import PhoneAuthMiddleware  # file missing in repo
 import keyboards as kb
 
 logger = logging.getLogger(__name__)
@@ -261,10 +261,6 @@ class BotManager:
         global_switch_mw = GlobalBotSwitchMiddleware(db)
         dp.message.outer_middleware(global_switch_mw)
         dp.callback_query.outer_middleware(global_switch_mw)
-
-        phone_auth_mw = PhoneAuthMiddleware(db)
-        dp.message.outer_middleware(phone_auth_mw)
-        dp.callback_query.outer_middleware(phone_auth_mw)
 
         throttle_mw = ThrottleMiddleware(db)
         dp.message.outer_middleware(throttle_mw)
