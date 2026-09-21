@@ -22,6 +22,11 @@ class WalletGiftCode(StatesGroup):
     waiting_code = State()
 
 
+class WalletTransfer(StatesGroup):
+    waiting_receiver = State()
+    waiting_amount = State()
+
+
 class ContactFlow(StatesGroup):
     waiting_message = State()
 
@@ -168,6 +173,14 @@ class AdminBroadcast(StatesGroup):
     waiting_message = State()
     waiting_duration = State()
     waiting_custom_minutes = State()
+    waiting_schedule_time = State()
+
+
+class AdminXuiInbound(StatesGroup):
+    waiting_protocol = State()
+    waiting_network = State()
+    waiting_tls = State()
+    waiting_port = State()
 
 
 class AdminDeepLinkTools(StatesGroup):

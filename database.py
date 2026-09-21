@@ -321,6 +321,12 @@ DEFAULT_SETTINGS = {
     "card_to_card_auto_amount_digits": "3",     # چند رقم آخر مبلغ برای یکتاسازی تصادفی اضافه شود
     "card_to_card_sms_amount_unit": "rial",     # واحد مبلغ داخل پیامک بانک: rial یا toman
     "card_to_card_sms_webhook_token": "",       # توکن احراز هویت وب‌هوک اپ BankSmsForwarder
+    # قابلیت‌های افزوده
+    "global_bot_enabled": "1",
+    "phone_auth_enabled": "1",
+    "phone_auth_allow_international": "1",
+    "smart_subscription_enabled": "1",
+    "smart_subscription_base_url": "",
 }
 DEFAULT_SETTINGS.update(extra_gateway_registry.default_settings())
 
@@ -640,6 +646,8 @@ class Database:
                     reseller_expires_at TEXT,
                     reseller_reminder_sent TEXT DEFAULT '',
                     score INTEGER DEFAULT 0,
+                    phone_number TEXT,
+                    phone_verified INTEGER DEFAULT 0,
                     joined_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
 
@@ -729,6 +737,38 @@ class Database:
                     cashback_type TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS smart_subscriptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    token TEXT UNIQUE NOT NULL,
+                    source_urls_json TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    is_active INTEGER DEFAULT 1
+                );
+                CREATE INDEX IF NOT EXISTS idx_smart_subscriptions_user ON smart_subscriptions(user_id);
+
+                CREATE TABLE IF NOT EXISTS scheduled_broadcasts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    admin_id INTEGER NOT NULL,
+                    message_text TEXT NOT NULL,
+                    scheduled_at TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    sent_count INTEGER DEFAULT 0,
+                    failed_count INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    sent_at TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_scheduled_broadcasts_status_time ON scheduled_broadcasts(status, scheduled_at);
+
+                CREATE TABLE IF NOT EXISTS wallet_transfers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender_id INTEGER NOT NULL,
+                    receiver_id INTEGER NOT NULL,
+                    amount INTEGER NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
 
                 CREATE TABLE IF NOT EXISTS settings (
@@ -1650,11 +1690,14 @@ class Database:
             ("panel_servers", "used_for_reseller", "INTEGER DEFAULT 0"),
             ("panel_servers", "xui_inbound_id", "INTEGER"),
             ("panel_servers", "xui_sub_base_url", "TEXT"),
+            ("panel_servers", "xui_sub_base_urls", "TEXT"),
             # چند-inbound برای 3X-UI: از این به بعد یک سرور می‌تواند همزمان چند
             # inbound برای ساخت کاربر جدید داشته باشد (JSON array از id ها، مثلاً
             # "[1,2,3]"). ستون قدیمی xui_inbound_id (تک‌مقداری) برای سازگاری با
             # نصب‌های قبلی حذف نشده و به‌عنوان fallback خوانده می‌شود.
             ("panel_servers", "xui_inbound_ids", "TEXT"),
+            ("users", "phone_number", "TEXT"),
+            ("users", "phone_verified", "INTEGER DEFAULT 0"),
             ("products", "is_auto_provision", "INTEGER DEFAULT 0"),
             ("products", "auto_provision_volume_gb", "INTEGER"),
             ("products", "provision_server_id", "INTEGER"),
@@ -2394,6 +2437,78 @@ class Database:
     # تنظیمات (settings)
     # -----------------------------------------------------------------------
 
+    def set_user_phone(self, tg_id: int, phone: str) -> bool:
+        phone = (phone or "").strip()
+        if len(phone) < 7:
+            return False
+        with self._get_conn() as conn:
+            conn.execute("UPDATE users SET phone_number=?, phone_verified=1 WHERE telegram_id=?", (phone, tg_id))
+        return True
+
+    def is_phone_verified(self, tg_id: int) -> bool:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT phone_verified FROM users WHERE telegram_id=?", (tg_id,)).fetchone()
+        return bool(row and row["phone_verified"])
+
+    def create_smart_subscription(self, user_id: int, source_urls: list) -> str:
+        source_urls = [u.strip() for u in source_urls if isinstance(u, str) and u.strip()]
+        if not source_urls:
+            raise ValueError("هیچ لینک اشتراکی معتبری وجود ندارد")
+        token = secrets.token_urlsafe(24)
+        payload = json.dumps(source_urls, ensure_ascii=False)
+        with self._get_conn() as conn:
+            conn.execute("UPDATE smart_subscriptions SET is_active=0 WHERE user_id=?", (user_id,))
+            conn.execute("INSERT INTO smart_subscriptions(user_id,token,source_urls_json) VALUES(?,?,?)", (user_id, token, payload))
+        return token
+
+    def get_smart_subscription(self, token: str):
+        with self._get_conn() as conn:
+            return conn.execute("SELECT * FROM smart_subscriptions WHERE token=? AND is_active=1", (token,)).fetchone()
+
+    def get_alternate_sub_urls(self, url: str) -> list:
+        """لینک‌های اشتراک جایگزین (دامنه/IP های دیگر همان سرور) برای یک لینک اشتراک."""
+        if not url:
+            return []
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT xui_sub_base_urls FROM panel_servers WHERE xui_sub_base_urls IS NOT NULL AND xui_sub_base_urls != ''").fetchall()
+        for row in rows:
+            try:
+                bases = [str(b).strip().rstrip("/") for b in json.loads(row[0]) if str(b).strip()]
+            except Exception:
+                continue
+            if len(bases) > 1 and url.startswith(bases[0] + "/"):
+                tail = url[len(bases[0]):]
+                return [b + tail for b in bases[1:]]
+        return []
+
+    def create_scheduled_broadcast(self, admin_id: int, message_text: str, scheduled_at: str) -> int:
+        with self._get_conn() as conn:
+            cur=conn.execute("INSERT INTO scheduled_broadcasts(admin_id,message_text,scheduled_at) VALUES(?,?,?)", (admin_id,message_text,scheduled_at))
+            return cur.lastrowid
+
+    def get_due_scheduled_broadcasts(self, now_iso: str):
+        with self._get_conn() as conn:
+            return conn.execute("SELECT * FROM scheduled_broadcasts WHERE status='pending' AND scheduled_at<=? ORDER BY id LIMIT 10", (now_iso,)).fetchall()
+
+    def mark_scheduled_broadcast(self, job_id: int, status: str, sent_count: int = 0, failed_count: int = 0):
+        with self._get_conn() as conn:
+            conn.execute("UPDATE scheduled_broadcasts SET status=?,sent_count=?,failed_count=?,sent_at=CURRENT_TIMESTAMP WHERE id=?", (status,sent_count,failed_count,job_id))
+
+    def transfer_wallet(self, sender_id: int, receiver_id: int, amount: int) -> bool:
+        amount=int(amount)
+        if amount<=0 or sender_id==receiver_id:
+            return False
+        with self._get_conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            sender=conn.execute("SELECT referral_credit FROM users WHERE telegram_id=?", (sender_id,)).fetchone()
+            receiver=conn.execute("SELECT telegram_id FROM users WHERE telegram_id=?", (receiver_id,)).fetchone()
+            if not sender or not receiver or int(sender["referral_credit"] or 0)<amount:
+                return False
+            conn.execute("UPDATE users SET referral_credit=referral_credit-? WHERE telegram_id=?", (amount,sender_id))
+            conn.execute("UPDATE users SET referral_credit=referral_credit+? WHERE telegram_id=?", (amount,receiver_id))
+            conn.execute("INSERT INTO wallet_transfers(sender_id,receiver_id,amount) VALUES(?,?,?)", (sender_id,receiver_id,amount))
+            return True
+
     def get_setting(self, key: str, default: str = "") -> str:
         # تنظیمات در حافظه کش می‌شوند چون به ازای هر پیام ورودی (فیلترهای
         # روتر در handlers_user.py) چندین بار خوانده می‌شوند؛ خواندن از dict
@@ -2558,6 +2673,10 @@ class Database:
                 "ON CONFLICT(telegram_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name",
                 (tg_id, username, first_name),
             )
+
+    def get_user_custom_configs(self, tg_id: int):
+        with self._get_conn() as conn:
+            return conn.execute("SELECT * FROM custom_configs WHERE user_id=? ORDER BY id DESC", (tg_id,)).fetchall()
 
     def get_user(self, tg_id: int):
         with self._get_conn() as conn:
@@ -7716,7 +7835,7 @@ class Database:
                    "default_group", "is_active", "template_username", "group_ids", "proxy_settings",
                    "used_for_custom_config", "used_for_test_config", "used_for_reseller", "start_on_first_use",
                    "max_services", "capacity_alert_sent", "transfer_price", "allow_transfer_target",
-                   "xui_inbound_id", "xui_inbound_ids", "xui_sub_base_url"}
+                   "xui_inbound_id", "xui_inbound_ids", "xui_sub_base_url", "xui_sub_base_urls"}
         sets, values = [], []
         for k, v in fields.items():
             if k in allowed and (v is not None or k == "max_services"):

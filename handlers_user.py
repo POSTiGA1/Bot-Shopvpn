@@ -25,7 +25,7 @@ from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, Teleg
 
 from md_utils import escape_md, escape_html
 import keyboards as kb
-from states import BuyFlow, ContactFlow, TicketFlow, TicketReplyFlow, AIChatFlow, DiscountEntry, WalletTopup, WalletGiftCode, CustomConfigFlow, RenewalFlow, ResellerFlow, ResellerRequestFlow, ServiceRenameFlow, ServiceTransferFlow, CommissionResellerRequestFlow
+from states import BuyFlow, ContactFlow, TicketFlow, TicketReplyFlow, AIChatFlow, DiscountEntry, WalletTopup, WalletGiftCode, WalletTransfer, CustomConfigFlow, RenewalFlow, ResellerFlow, ResellerRequestFlow, ServiceRenameFlow, ServiceTransferFlow, CommissionResellerRequestFlow
 import ai_support
 from config import MAX_TEST_PER_USER, RESELLER_DBS_DIR, resolve_db_path, DB_PATH, ADMIN_PANEL_URL
 from database import Database, DuplicateBotTokenError
@@ -380,6 +380,33 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
             await _send_inline_main_menu(call.message, call.from_user.id)
         else:
             await call.answer("❌ هنوز عضو کانال نشده‌اید.", show_alert=True)
+
+    @router.message(Command("transfer_wallet"))
+    async def transfer_wallet_cmd(message: Message):
+        parts=(message.text or "").split()
+        if len(parts)!=3 or not parts[1].lstrip("-").isdigit() or not parts[2].isdigit():
+            await message.answer("فرمت: /transfer_wallet USER_ID AMOUNT")
+            return
+        receiver=int(parts[1]); amount=int(parts[2])
+        ok=await asyncio.to_thread(db.transfer_wallet, message.from_user.id, receiver, amount)
+        await message.answer("✅ انتقال کیف پول انجام شد." if ok else "⛔️ انتقال ناموفق بود؛ موجودی یا کاربر مقصد را بررسی کنید.")
+
+    @router.message(Command("smartsub"))
+    async def smartsub_cmd(message: Message):
+        if db.get_setting("smart_subscription_enabled","1")!="1":
+            await message.answer("⛔️ اشتراک هوشمند غیرفعال است."); return
+        rows=await asyncio.to_thread(db.get_user_custom_configs, message.from_user.id) if hasattr(db,"get_user_custom_configs") else []
+        urls=[]
+        for r in rows or []:
+            if r["subscription_url"] and r["status"]=="active": urls.append(r["subscription_url"])
+        if len(urls)<2:
+            await message.answer("ℹ️ برای ساخت اشتراک هوشمند حداقل دو اشتراک فعال لازم است."); return
+        token=await asyncio.to_thread(db.create_smart_subscription,message.from_user.id,urls)
+        from config import API_BASE_URL
+        base=(db.get_setting("smart_subscription_base_url","") or API_BASE_URL).rstrip("/")
+        if not base:
+            await message.answer("⛔️ آدرس عمومی API تنظیم نشده است."); return
+        await message.answer(f"🔗 لینک اشتراک هوشمند شما:\n{base}/sub/smart/{token}")
 
     # -----------------------------------------------------------------------
     # شروع
@@ -4446,6 +4473,44 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
             f"موجودی فعلی: {result['new_balance']:,} تومان",
             reply_markup=kb.wallet_menu_kb(),
         )
+
+    @router.callback_query(F.data == "wallet_transfer")
+    async def cb_wallet_transfer(call: CallbackQuery, state: FSMContext):
+        await state.set_state(WalletTransfer.waiting_receiver)
+        await _safe_edit(call.message, "💸 آیدی عددی تلگرام کاربر مقصد را ارسال کنید:", reply_markup=kb.cancel_kb())
+        await call.answer()
+
+    @router.message(WalletTransfer.waiting_receiver)
+    async def process_wallet_transfer_receiver(message: Message, state: FSMContext):
+        text = (message.text or "").strip()
+        if not text.isdigit() or int(text) == message.from_user.id:
+            await message.answer("⚠️ یک آیدی عددی معتبر (غیر از خودتان) ارسال کنید.", reply_markup=kb.cancel_kb())
+            return
+        await state.update_data(transfer_receiver=int(text))
+        await state.set_state(WalletTransfer.waiting_amount)
+        balance = await asyncio.to_thread(db.get_wallet_credit, message.from_user.id)
+        await message.answer(f"مبلغ انتقال (تومان) را ارسال کنید.\nموجودی شما: {balance:,} تومان", reply_markup=kb.cancel_kb())
+
+    @router.message(WalletTransfer.waiting_amount)
+    async def process_wallet_transfer_amount(message: Message, state: FSMContext):
+        text = (message.text or "").strip()
+        if not text.isdigit() or int(text) <= 0:
+            await message.answer("⚠️ یک عدد صحیح مثبت ارسال کنید.", reply_markup=kb.cancel_kb())
+            return
+        data = await state.get_data()
+        receiver = data.get("transfer_receiver")
+        amount = int(text)
+        await state.clear()
+        ok = await asyncio.to_thread(db.transfer_wallet, message.from_user.id, receiver, amount)
+        if not ok:
+            await message.answer("⛔️ انتقال ناموفق بود؛ موجودی یا کاربر مقصد را بررسی کنید.", reply_markup=kb.wallet_menu_kb())
+            return
+        balance = await asyncio.to_thread(db.get_wallet_credit, message.from_user.id)
+        await message.answer(f"✅ {amount:,} تومان منتقل شد.\nموجودی فعلی: {balance:,} تومان", reply_markup=kb.wallet_menu_kb())
+        try:
+            await message.bot.send_message(receiver, f"💸 {amount:,} تومان از طرف یک کاربر به کیف پول شما منتقل شد.")
+        except Exception:
+            pass
 
     @router.callback_query(F.data == "start_topup")
     async def cb_start_topup(call: CallbackQuery, state: FSMContext):

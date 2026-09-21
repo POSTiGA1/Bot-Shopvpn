@@ -19,7 +19,7 @@ import zipfile
 from aiogram import Router, F, Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import Message, CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, FSInputFile, BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.filters import Command, StateFilter
@@ -72,6 +72,7 @@ from states import (
     AdminC2CCard,
     AdminC2CSettings,
     AdminBroadcast,
+    AdminXuiInbound,
     AdminBulkGift,
     AdminBulkPrice,
     AdminDeepLinkTools,
@@ -5025,6 +5026,99 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
         server = await asyncio.to_thread(db.get_panel_server, server_id)
         await message.answer("✅ سقف ظرفیت ذخیره شد.", reply_markup=kb.panel_server_view_kb(server))
 
+    async def _xui_server_or_deny(call: CallbackQuery, server_id: int):
+        if not full_access_bot:
+            await deny_reseller_panel_access(call)
+            return None
+        if not senior_admin_only(call.from_user.id):
+            await deny_mid(call)
+            return None
+        server = await asyncio.to_thread(db.get_panel_server, server_id)
+        if not server or server["panel_type"] != "3xui":
+            await call.answer("این قابلیت فقط برای سرور 3X-UI است.", show_alert=True)
+            return None
+        return server
+
+    @router.callback_query(F.data.startswith("adm_panel_server_backup:"))
+    async def cb_admin_panel_server_backup(call: CallbackQuery):
+        server_id = callback_id(call.data, "adm_panel_server_backup")
+        server = await _xui_server_or_deny(call, server_id)
+        if not server:
+            return
+        await call.answer("در حال دریافت بکاپ...")
+        try:
+            data, _ = await get_provider(server).backup_panel()
+        except PanelError as e:
+            await call.message.answer(f"⛔️ {e}")
+            return
+        filename = f"3xui_panel_{server_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
+        await call.message.answer_document(BufferedInputFile(data, filename=filename), caption=f"💾 بکاپ پنل «{server['name']}»")
+        await asyncio.to_thread(db.log_admin_action, call.from_user.id, "panel_server_backup", f"سرور #{server_id}")
+
+    @router.callback_query(F.data.startswith("adm_xui_inb_new:"))
+    async def cb_admin_xui_inbound_new(call: CallbackQuery, state: FSMContext):
+        server_id = callback_id(call.data, "adm_xui_inb_new")
+        if not await _xui_server_or_deny(call, server_id):
+            return
+        await state.clear()
+        await state.update_data(xui_server_id=server_id)
+        await state.set_state(AdminXuiInbound.waiting_protocol)
+        await safe_edit(call, "پروتکل inbound جدید را انتخاب کن:", reply_markup=kb.xui_inbound_protocol_kb(server_id))
+        await call.answer()
+
+    @router.callback_query(AdminXuiInbound.waiting_protocol, F.data.startswith("adm_xui_inb_proto:"))
+    async def cb_admin_xui_inbound_proto(call: CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        await state.update_data(xui_protocol=call.data.split(":", 1)[1])
+        await state.set_state(AdminXuiInbound.waiting_network)
+        await safe_edit(call, "نوع شبکه (transport) را انتخاب کن:", reply_markup=kb.xui_inbound_network_kb(data["xui_server_id"]))
+        await call.answer()
+
+    @router.callback_query(AdminXuiInbound.waiting_network, F.data.startswith("adm_xui_inb_net:"))
+    async def cb_admin_xui_inbound_net(call: CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        await state.update_data(xui_network=call.data.split(":", 1)[1])
+        await state.set_state(AdminXuiInbound.waiting_tls)
+        await safe_edit(call, "امنیت لایه انتقال:", reply_markup=kb.xui_inbound_tls_kb(data["xui_server_id"]))
+        await call.answer()
+
+    @router.callback_query(AdminXuiInbound.waiting_tls, F.data.startswith("adm_xui_inb_tls:"))
+    async def cb_admin_xui_inbound_tls(call: CallbackQuery, state: FSMContext):
+        data = await state.get_data()
+        await state.update_data(xui_tls=call.data.split(":", 1)[1] == "1")
+        await state.set_state(AdminXuiInbound.waiting_port)
+        await safe_edit(
+            call,
+            "شماره پورت را بفرست (۱ تا ۶۵۵۳۵).\n۰ = انتخاب تصادفی",
+            reply_markup=kb.admin_back_kb(f"adm_panel_server_view:{data['xui_server_id']}"),
+        )
+        await call.answer()
+
+    @router.message(AdminXuiInbound.waiting_port)
+    async def process_admin_xui_inbound_port(message: Message, state: FSMContext):
+        text = (message.text or "").strip()
+        if not text.isdigit() or int(text) > 65535:
+            await message.answer("⚠️ یک عدد بین ۰ تا ۶۵۵۳۵ بفرست.")
+            return
+        data = await state.get_data()
+        server_id = data.get("xui_server_id")
+        server = await asyncio.to_thread(db.get_panel_server, server_id)
+        await state.clear()
+        if not server:
+            await message.answer("سرور یافت نشد.")
+            return
+        port = int(text) or None
+        try:
+            result = await get_provider(server).create_inbound(data.get("xui_protocol"), data.get("xui_network"), port, None, bool(data.get("xui_tls")))
+        except PanelError as e:
+            await message.answer(f"⛔️ {e}", reply_markup=kb.panel_server_view_kb(server))
+            return
+        await asyncio.to_thread(db.log_admin_action, message.from_user.id, "xui_inbound_create", f"سرور #{server_id} | {result['protocol']}/{result['network']} | پورت {result['port']}")
+        await message.answer(
+            f"✅ Inbound ساخته شد.\nشناسه: {result['id']}\nنام: {result['remark']}\nپروتکل: {result['protocol']}\nشبکه: {result['network']}\nپورت: {result['port']}",
+            reply_markup=kb.panel_server_view_kb(server),
+        )
+
     @router.callback_query(F.data.startswith("adm_panel_server_transfer:"))
     async def cb_admin_panel_server_transfer(call: CallbackQuery, state: FSMContext):
         if not full_access_bot:
@@ -8028,7 +8122,7 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
 
     @router.message(AdminBroadcast.waiting_message)
     async def process_broadcast(message: Message, state: FSMContext):
-        await state.update_data(broadcast_chat_id=message.chat.id, broadcast_message_id=message.message_id)
+        await state.update_data(broadcast_chat_id=message.chat.id, broadcast_message_id=message.message_id, broadcast_text=message.text)
         await state.set_state(AdminBroadcast.waiting_duration)
         await message.answer(
             "⏱ این پیام همگانی بعد از چه مدت خودش حذف شود؟ (برای ماندن همیشگی، گزینه‌ی «بدون حذف خودکار» را بزن)",
@@ -8088,6 +8182,45 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
             return
         await call.answer("در حال ارسال...")
         await _finalize_broadcast(state, call.bot, call.from_user.id, int(value), call.message.answer)
+
+    @router.callback_query(F.data == "adm_broadcast_schedule")
+    async def cb_broadcast_schedule(call: CallbackQuery, state: FSMContext):
+        if not full_admin_only(call.from_user.id):
+            return await deny_support(call)
+        data = await state.get_data()
+        if not (data.get("broadcast_text") or "").strip():
+            await call.answer("زمان‌بندی فقط برای پیام متنی ممکن است.", show_alert=True)
+            return
+        await state.set_state(AdminBroadcast.waiting_schedule_time)
+        await replace_admin_view(
+            call,
+            "زمان ارسال را به وقت تهران بفرست:\nYYYY-MM-DD HH:MM\nمثال: 2026-09-25 18:30",
+            reply_markup=kb.admin_back_kb("adm_cat:marketing"),
+        )
+        await call.answer()
+
+    @router.message(AdminBroadcast.waiting_schedule_time)
+    async def process_broadcast_schedule_time(message: Message, state: FSMContext):
+        from zoneinfo import ZoneInfo
+        from datetime import timezone
+        try:
+            local = datetime.strptime((message.text or "").strip(), "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("Asia/Tehran"))
+        except ValueError:
+            await message.answer("⚠️ قالب نامعتبر است. مثال: 2026-09-25 18:30")
+            return
+        when_utc = local.astimezone(timezone.utc).replace(tzinfo=None)
+        if when_utc <= datetime.utcnow():
+            await message.answer("⚠️ زمان باید در آینده باشد.")
+            return
+        data = await state.get_data()
+        text = (data.get("broadcast_text") or "").strip()
+        await state.clear()
+        job_id = await asyncio.to_thread(db.create_scheduled_broadcast, message.from_user.id, text, when_utc.isoformat(timespec="seconds"))
+        await asyncio.to_thread(db.log_admin_action, message.from_user.id, "broadcast_schedule", f"پیام همگانی زمان‌بندی‌شده #{job_id} برای {local.strftime('%Y-%m-%d %H:%M')} (تهران)")
+        await message.answer(
+            f"⏰ پیام برای {local.strftime('%Y-%m-%d %H:%M')} (وقت تهران) زمان‌بندی شد. شناسه: {job_id}",
+            reply_markup=kb.admin_category_kb(db, is_main_bot, "marketing"),
+        )
 
     @router.message(AdminBroadcast.waiting_custom_minutes)
     async def process_broadcast_custom_minutes(message: Message, state: FSMContext, bot: Bot):

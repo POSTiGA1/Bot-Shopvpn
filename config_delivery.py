@@ -15,6 +15,7 @@
 «شیک» استفاده کند، نه فقط یک لینک خشک و ساده.
 """
 
+import asyncio
 from datetime import datetime
 from io import BytesIO
 
@@ -173,6 +174,13 @@ async def deliver_config_to_user(
                 f"🔗 لینک اشتراک شما (برای کپی):\n`{link}`",
                 parse_mode="Markdown",
             )
+            alternates = await asyncio.to_thread(db.get_alternate_sub_urls, link) if db is not None else []
+            if alternates:
+                await bot.send_message(
+                    user_tg_id,
+                    "🔁 لینک‌های جایگزین (اگر لینک بالا باز نشد):\n" + "\n".join(f"`{u}`" for u in alternates),
+                    parse_mode="Markdown",
+                )
 
         if individual_on and link.startswith(("http://", "https://")):
             try:

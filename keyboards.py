@@ -1494,6 +1494,7 @@ def admin_broadcast_duration_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="۳ روز", callback_data="adm_broadcast_dur:259200"),
         ],
         [InlineKeyboardButton(text="✏️ مدت دلخواه (دقیقه)", callback_data="adm_broadcast_dur:custom")],
+        [InlineKeyboardButton(text="⏰ زمان‌بندی ارسال (فقط متن)", callback_data="adm_broadcast_schedule")],
         [InlineKeyboardButton(text="❌ انصراف", callback_data="adm_broadcast")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -3001,6 +3002,11 @@ def panel_server_view_kb(server) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(
             text="🔗 تغییر لینک Subscription", callback_data=f"adm_panel_server_suburl:{server['id']}",
         )])
+    if server["panel_type"] == "3xui":
+        rows += [
+            [InlineKeyboardButton(text="➕ ساخت Inbound جدید", callback_data=f"adm_xui_inb_new:{server['id']}")],
+            [InlineKeyboardButton(text="💾 بکاپ پنل", callback_data=f"adm_panel_server_backup:{server['id']}")],
+        ]
     rows += [
         [InlineKeyboardButton(text=custom_text, callback_data=f"adm_panel_server_usage:custom:{server['id']}")],
         [InlineKeyboardButton(text=test_text, callback_data=f"adm_panel_server_usage:test:{server['id']}")],
@@ -3010,6 +3016,38 @@ def panel_server_view_kb(server) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=toggle_text, callback_data=f"adm_panel_server_toggle:{server['id']}")],
         [InlineKeyboardButton(text="🗑 حذف سرور", callback_data=f"adm_panel_server_delete:{server['id']}")],
         [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_panel_servers")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def xui_inbound_protocol_kb(server_id: int) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="VLESS", callback_data="adm_xui_inb_proto:vless"),
+         InlineKeyboardButton(text="VMess", callback_data="adm_xui_inb_proto:vmess")],
+        [InlineKeyboardButton(text="Trojan", callback_data="adm_xui_inb_proto:trojan"),
+         InlineKeyboardButton(text="Shadowsocks", callback_data="adm_xui_inb_proto:shadowsocks")],
+        [InlineKeyboardButton(text="⬅️ انصراف", callback_data=f"adm_panel_server_view:{server_id}")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def xui_inbound_network_kb(server_id: int) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="TCP", callback_data="adm_xui_inb_net:tcp"),
+         InlineKeyboardButton(text="WebSocket", callback_data="adm_xui_inb_net:ws")],
+        [InlineKeyboardButton(text="gRPC", callback_data="adm_xui_inb_net:grpc"),
+         InlineKeyboardButton(text="HTTPUpgrade", callback_data="adm_xui_inb_net:httpupgrade")],
+        [InlineKeyboardButton(text="H2", callback_data="adm_xui_inb_net:h2")],
+        [InlineKeyboardButton(text="⬅️ انصراف", callback_data=f"adm_panel_server_view:{server_id}")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def xui_inbound_tls_kb(server_id: int) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="🔒 TLS", callback_data="adm_xui_inb_tls:1"),
+         InlineKeyboardButton(text="🔓 بدون TLS", callback_data="adm_xui_inb_tls:0")],
+        [InlineKeyboardButton(text="⬅️ انصراف", callback_data=f"adm_panel_server_view:{server_id}")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -3044,6 +3082,7 @@ def wallet_menu_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="➕ شارژ کیف پول", callback_data="start_topup")],
             [InlineKeyboardButton(text="🎁 استفاده از گیفت‌کد", callback_data="wallet_gift_code")],
+            [InlineKeyboardButton(text="💸 انتقال موجودی به کاربر دیگر", callback_data="wallet_transfer")],
         ]
     )
 
