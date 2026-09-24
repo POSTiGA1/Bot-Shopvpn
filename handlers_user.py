@@ -26,7 +26,7 @@ from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, Teleg
 
 from md_utils import escape_md, escape_html
 import keyboards as kb
-from states import BuyFlow, ContactFlow, TicketFlow, TicketReplyFlow, AIChatFlow, DiscountEntry, RenewalDiscountEntry, WalletTopup, WalletGiftCode, WalletTransfer, CustomConfigFlow, RenewalFlow, ResellerFlow, ResellerRequestFlow, ServiceRenameFlow, ServiceTransferFlow, CommissionResellerRequestFlow
+from states import BuyFlow, ContactFlow, TicketFlow, TicketReplyFlow, AIChatFlow, DiscountEntry, RenewalDiscountEntry, WalletTopup, WalletGiftCode, WalletTransfer, CoinConvert, CustomConfigFlow, RenewalFlow, ResellerFlow, ResellerRequestFlow, ServiceRenameFlow, ServiceTransferFlow, CommissionResellerRequestFlow
 import ai_support
 from service_refund import (
     quote_service_refund, refund_quote_text, wallet_refund_amount, grant_service_refund_credit, refund_result_text,
@@ -4985,9 +4985,8 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
     # کیف پول (جدا از زیرمجموعه‌گیری)
     # -----------------------------------------------------------------------
 
-    @router.message(F.text.func(lambda t: t == db.get_setting("btn_wallet")))
-    async def wallet_menu(message: Message):
-        st = await asyncio.to_thread(db.get_wallet_status, message.from_user.id)
+    async def _wallet_text(user_id: int) -> str:
+        st = await asyncio.to_thread(db.get_wallet_status, user_id)
         text = (
             "👛 کیف پول شما\n\n"
             f"موجودی فعلی: {st['balance']:,} تومان\n"
@@ -4999,7 +4998,98 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
                 f"✅ اعتبار قابل استفاده: {max(st['spendable'], 0):,} تومان\n"
             )
         text += "\nاین موجودی (چه از شارژ دستی، چه از پورسانت زیرمجموعه‌گیری) به‌صورت خودکار در خرید بعدی شما کسر می‌شود."
-        await message.answer(text, reply_markup=kb.wallet_menu_kb(db))
+        return text
+
+    @router.message(F.text.func(lambda t: t == db.get_setting("btn_wallet")))
+    async def wallet_menu(message: Message):
+        await message.answer(await _wallet_text(message.from_user.id), reply_markup=kb.wallet_menu_kb(db))
+
+    async def _coins_view(user_id: int):
+        s = await asyncio.to_thread(db.get_coin_settings)
+        coins = await asyncio.to_thread(db.get_user_score, user_id)
+        mode = await asyncio.to_thread(db.get_user_coin_mode, user_id)
+        lines = ["🪙 سکه‌های شما", "", f"موجودی سکه: {coins:,}"]
+        if s["value"] > 0:
+            lines.append(f"ارزش هر سکه: {s['value']:,} تومان (جمعاً {coins * s['value']:,} تومان)")
+        lines.append("")
+        if mode == "lottery":
+            lines += [
+                "حالت فعلی: 🎟 شرکت در قرعه‌کشی شبانه",
+                f"اگر حداقل {s['lottery_min']:,} سکه داشته باشید، در قرعه‌کشی ساعت ۰۰:۰۰ شرکت داده می‌شوید. "
+                "سکه‌ی شرکت‌کنندگان بعد از هر قرعه‌کشی صفر می‌شود.",
+            ]
+        else:
+            lines.append("حالت فعلی: 💰 تبدیل به موجودی کیف پول")
+            if s["value"] > 0:
+                limit = f"{s['convert_max']:,}" if s["convert_max"] else "بدون سقف"
+                lines.append(f"در هر تبدیل حداقل {s['convert_min']:,} و حداکثر {limit} سکه می‌توانید تبدیل کنید.")
+            else:
+                lines.append("تبدیل سکه به موجودی هنوز توسط ادمین فعال نشده است.")
+        can_convert = s["value"] > 0 and coins >= s["convert_min"]
+        return "\n".join(lines), kb.coins_menu_kb(mode, can_convert)
+
+    @router.callback_query(F.data == "coins_menu")
+    async def cb_coins_menu(call: CallbackQuery, state: FSMContext):
+        if (await asyncio.to_thread(db.get_setting, "score_enabled", "1")) != "1":
+            await call.answer("سیستم سکه در حال حاضر غیرفعال است.", show_alert=True)
+            return
+        await state.clear()
+        text, markup = await _coins_view(call.from_user.id)
+        await _safe_edit(call.message, text, reply_markup=markup)
+        await call.answer()
+
+    @router.callback_query(F.data == "coins_back")
+    async def cb_coins_back(call: CallbackQuery, state: FSMContext):
+        await state.clear()
+        await _safe_edit(call.message, await _wallet_text(call.from_user.id), reply_markup=kb.wallet_menu_kb(db))
+        await call.answer()
+
+    @router.callback_query(F.data.startswith("coins_mode:"))
+    async def cb_coins_mode(call: CallbackQuery):
+        await asyncio.to_thread(db.set_user_coin_mode, call.from_user.id, call.data.split(":", 1)[1])
+        text, markup = await _coins_view(call.from_user.id)
+        await _safe_edit(call.message, text, reply_markup=markup)
+        await call.answer("ذخیره شد.")
+
+    @router.callback_query(F.data == "coins_convert")
+    async def cb_coins_convert(call: CallbackQuery, state: FSMContext):
+        s = await asyncio.to_thread(db.get_coin_settings)
+        coins = await asyncio.to_thread(db.get_user_score, call.from_user.id)
+        mode = await asyncio.to_thread(db.get_user_coin_mode, call.from_user.id)
+        if not s["enabled"] or s["value"] <= 0 or mode != "wallet" or coins < s["convert_min"]:
+            await call.answer("در حال حاضر امکان تبدیل سکه وجود ندارد.", show_alert=True)
+            return
+        limit = f"{s['convert_max']:,}" if s["convert_max"] else "بدون سقف"
+        await state.set_state(CoinConvert.waiting_amount)
+        await _safe_edit(
+            call.message,
+            f"💰 چند سکه را می‌خواهید تبدیل کنید؟ فقط عدد ارسال کنید.\n"
+            f"موجودی سکه: {coins:,}\n"
+            f"حداقل: {s['convert_min']:,} | حداکثر: {limit}\n"
+            f"ارزش هر سکه: {s['value']:,} تومان",
+            reply_markup=kb.cancel_kb(),
+        )
+        await call.answer()
+
+    @router.message(CoinConvert.waiting_amount)
+    async def process_coin_convert(message: Message, state: FSMContext):
+        text = (message.text or "").strip().replace(",", "").replace("٬", "")
+        if not text.isdigit() or int(text) <= 0:
+            await message.answer("⚠️ یک عدد صحیح مثبت ارسال کنید.", reply_markup=kb.cancel_kb())
+            return
+        try:
+            result = await asyncio.to_thread(db.convert_coins_to_wallet, message.from_user.id, int(text))
+        except ValueError as e:
+            await message.answer(f"❌ {e}\nدوباره تلاش کنید یا انصراف بدهید.", reply_markup=kb.cancel_kb())
+            return
+        await state.clear()
+        balance = await asyncio.to_thread(db.get_wallet_credit, message.from_user.id)
+        await message.answer(
+            f"✅ {result['coins']:,} سکه به {result['amount']:,} تومان تبدیل و به کیف پول شما اضافه شد.\n"
+            f"سکه‌ی باقی‌مانده: {result['coins_left']:,}\n"
+            f"موجودی کیف پول: {balance:,} تومان",
+            reply_markup=kb.wallet_menu_kb(db),
+        )
 
     # -----------------------------------------------------------------------
     # گردونه شانس

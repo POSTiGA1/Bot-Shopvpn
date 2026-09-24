@@ -1213,7 +1213,7 @@ ADMIN_PANEL_ITEMS = [
     ("adm_noapay_payments", "⭐ پرداخت‌های NoapayBot", "adm_noapay_payments"),
     ("adm_discounts_menu", "🎟 مدیریت کدهای تخفیف", "adm_discounts_menu"),
     ("adm_wheel_settings", "🎡 مدیریت گردونه شانس", "adm_wheel_settings"),
-    ("adm_lottery_settings", "🏆 امتیاز و قرعه‌کشی شبانه", "adm_lottery_settings"),
+    ("adm_lottery_settings", "🪙 سکه و قرعه‌کشی شبانه", "adm_lottery_settings"),
     ("adm_cashback_settings", "💸 کش‌بک تمدید و شارژ", "adm_cashback_settings"),
     ("adm_renewal_settings", "🔔 یادآوری تمدید سرویس", "adm_renewal_settings"),
     ("adm_volume_reminder_settings", "📉 یادآوری اتمام حجم", "adm_volume_reminder_settings"),
@@ -3467,7 +3467,21 @@ def wallet_menu_kb(db=None) -> InlineKeyboardMarkup:
     ]
     if db is None or db.get_setting("wallet_show_transfer", "1") == "1":
         rows.append([InlineKeyboardButton(text="💸 انتقال موجودی به کاربر دیگر", callback_data="wallet_transfer")])
+    if db is None or db.get_setting("score_enabled", "1") == "1":
+        rows.append([InlineKeyboardButton(text="🪙 سکه‌های من", callback_data="coins_menu")])
     rows.append([InlineKeyboardButton(text="📜 تاریخچه تراکنش‌ها", callback_data="wallet_history")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def coins_menu_kb(mode: str, can_convert: bool) -> InlineKeyboardMarkup:
+    rows = []
+    if mode == "lottery":
+        rows.append([InlineKeyboardButton(text="🔁 تغییر به: تبدیل به کیف پول", callback_data="coins_mode:wallet")])
+    else:
+        rows.append([InlineKeyboardButton(text="🔁 تغییر به: شرکت در قرعه‌کشی", callback_data="coins_mode:lottery")])
+        if can_convert:
+            rows.append([InlineKeyboardButton(text="💰 تبدیل سکه به موجودی", callback_data="coins_convert")])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="coins_back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

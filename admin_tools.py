@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""صفحه‌های مدیریت داخل بات: امتیاز و قرعه‌کشی، کش‌بک، هدیه‌ی گروهی و ضداسپم."""
+"""صفحه‌های مدیریت داخل بات: سکه و قرعه‌کشی، کش‌بک، هدیه‌ی گروهی و ضداسپم."""
 
 import asyncio
 import html
@@ -23,19 +23,39 @@ MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 
 NUM_FIELDS = {
     "lt_buy": {
-        "key": "score_purchase_points", "title": "⭐ امتیاز هر خرید", "unit": "امتیاز",
+        "key": "score_purchase_points", "title": "🪙 سکه‌ی هر خرید", "unit": "سکه",
         "lo": 0, "hi": 100, "presets": (0, 1, 2, 3, 5, 10), "default": 2, "card": "lottery",
-        "hint": "این تعداد امتیاز بعد از تایید هر خرید به کاربر داده می‌شود. ۰ یعنی خرید امتیاز نمی‌دهد.",
+        "hint": "این تعداد سکه بعد از تایید هر خرید به کاربر داده می‌شود. ۰ یعنی خرید سکه نمی‌دهد.",
     },
     "lt_ren": {
-        "key": "score_renewal_points", "title": "🔄 امتیاز هر تمدید", "unit": "امتیاز",
+        "key": "score_renewal_points", "title": "🔄 سکه‌ی هر تمدید", "unit": "سکه",
         "lo": 0, "hi": 100, "presets": (0, 1, 2, 3, 5, 10), "default": 1, "card": "lottery",
-        "hint": "این تعداد امتیاز بعد از تایید هر تمدید به کاربر داده می‌شود. ۰ یعنی تمدید امتیاز نمی‌دهد.",
+        "hint": "این تعداد سکه بعد از تایید هر تمدید به کاربر داده می‌شود. ۰ یعنی تمدید سکه نمی‌دهد.",
     },
     "lt_ref": {
-        "key": "score_referral_points", "title": "🤝 امتیاز هر دعوت موفق", "unit": "امتیاز",
+        "key": "score_referral_points", "title": "🤝 سکه‌ی هر زیرمجموعه", "unit": "سکه",
         "lo": 0, "hi": 100, "presets": (0, 1, 2, 3, 5, 10), "default": 1, "card": "lottery",
-        "hint": "این تعداد امتیاز به دعوت‌کننده داده می‌شود. ۰ یعنی دعوت امتیاز نمی‌دهد.",
+        "hint": "این تعداد سکه به‌محض عضویت هر زیرمجموعه (بدون نیاز به خرید) به دعوت‌کننده داده می‌شود. ۰ یعنی سکه نمی‌دهد.",
+    },
+    "lt_val": {
+        "key": "coin_value_toman", "title": "💵 ارزش هر سکه", "unit": "تومان",
+        "lo": 0, "hi": 10_000_000, "presets": (0, 100, 500, 1000, 2000, 5000), "default": 0, "card": "lottery",
+        "hint": "هر سکه هنگام تبدیل به موجودی کیف پول چند تومان حساب شود. ۰ یعنی تبدیل سکه به موجودی غیرفعال است.",
+    },
+    "lt_cmin": {
+        "key": "coin_convert_min", "title": "⬇️ حداقل سکه برای هر تبدیل", "unit": "سکه",
+        "lo": 1, "hi": 1_000_000, "presets": (1, 5, 10, 20, 50, 100), "default": 1, "card": "lottery",
+        "hint": "کاربر برای تبدیل به موجودی کیف پول حداقل این تعداد سکه را باید وارد کند.",
+    },
+    "lt_cmax": {
+        "key": "coin_convert_max", "title": "⬆️ حداکثر سکه برای هر تبدیل", "unit": "سکه",
+        "lo": 0, "hi": 10_000_000, "presets": (0, 50, 100, 200, 500, 1000), "default": 0, "card": "lottery",
+        "hint": "کاربر در هر بار تبدیل حداکثر این تعداد سکه را می‌تواند وارد کند. ۰ یعنی بدون سقف.",
+    },
+    "lt_min": {
+        "key": "lottery_min_coins", "title": "🎟 حداقل سکه برای ورود به قرعه‌کشی", "unit": "سکه",
+        "lo": 1, "hi": 1_000_000, "presets": (1, 5, 10, 20, 50, 100), "default": 1, "card": "lottery",
+        "hint": "فقط کاربرانی که حالت سکه‌شان «قرعه‌کشی» است و حداقل این تعداد سکه دارند وارد قرعه‌کشی می‌شوند.",
     },
     "lt_exp": {
         "key": "lottery_discount_expiry_hours", "title": "⏳ اعتبار کد تخفیف جایزه", "unit": "ساعت",
@@ -112,7 +132,7 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
             await target.answer(text, reply_markup=markup)
 
     # ------------------------------------------------------------------
-    # ویرایشگر عددی مشترک (امتیاز، کش‌بک، ضداسپم)
+    # ویرایشگر عددی مشترک (سکه، کش‌بک، ضداسپم)
     # ------------------------------------------------------------------
 
     @router.callback_query(F.data.startswith("adm_ns:"))
@@ -180,7 +200,7 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
         await _save_num(message, state, code, value)
 
     # ------------------------------------------------------------------
-    # امتیاز و قرعه‌کشی شبانه
+    # سکه و قرعه‌کشی شبانه
     # ------------------------------------------------------------------
 
     def _lottery_snapshot():
@@ -199,6 +219,7 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
             "ren": points("score_renewal_points", 1),
             "ref": points("score_referral_points", 1),
             "participants": db.count_score_participants(s["agent_enabled"]),
+            "coin": db.get_coin_settings(),
             "last": last[0] if last else None,
         }
 
@@ -216,12 +237,12 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
         if note:
             lines += [note, ""]
         lines += [
-            "🏆 امتیاز و قرعه‌کشی شبانه",
+            "🪙 سکه و قرعه‌کشی شبانه",
             "",
-            "هر خرید، تمدید و دعوت موفق به کاربر امتیاز می‌دهد. هر شب ساعت ۰۰:۰۰ (به وقت سرور) "
-            "سه نفر با بیشترین امتیاز برنده می‌شوند و امتیاز همه صفر می‌شود.",
+            "هر خرید، تمدید و زیرمجموعه‌ی جدید به کاربر سکه می‌دهد. کاربر انتخاب می‌کند سکه‌هایش برای قرعه‌کشی باشد یا به موجودی کیف پول تبدیل شود. "
+            "هر شب ساعت ۰۰:۰۰ (به وقت سرور) سه نفر با بیشترین سکه بین شرکت‌کنندگان برنده می‌شوند و سکه‌ی همه‌ی شرکت‌کنندگان صفر می‌شود.",
             "",
-            f"• سیستم امتیاز: {_on(s['score_enabled'])}",
+            f"• سیستم سکه: {_on(s['score_enabled'])}",
             f"• قرعه‌کشی شبانه: {_on(s['enabled'])}",
             f"• شمول نماینده‌ها: {'✅ بله' if s['agent_enabled'] else '❌ خیر'}",
             f"• نوع جایزه: {'💰 شارژ کیف پول' if wallet else '🎟 کد تخفیف'}",
@@ -230,16 +251,20 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
         if not wallet:
             lines.append(f"• اعتبار کد تخفیف: {s['discount_expiry_hours']} ساعت")
         lines += [
-            f"• امتیاز هر خرید: {snap['buy']} | تمدید: {snap['ren']} | دعوت: {snap['ref']}",
+            f"• سکه‌ی هر خرید: {snap['buy']} | تمدید: {snap['ren']} | زیرمجموعه: {snap['ref']}",
+            f"• ارزش هر سکه: {snap['coin']['value']:,} تومان" + ("" if snap["coin"]["value"] else " (تبدیل غیرفعال)"),
+            f"• تبدیل به کیف پول: حداقل {snap['coin']['convert_min']:,} | حداکثر "
+            + (f"{snap['coin']['convert_max']:,}" if snap["coin"]["convert_max"] else "بدون سقف") + " سکه",
+            f"• حداقل سکه برای قرعه‌کشی: {snap['coin']['lottery_min']:,}",
             f"• گزارش برندگان: {report}",
             "",
-            f"👥 کاربران دارای امتیاز: {snap['participants']:,} نفر",
+            f"👥 شرکت‌کنندگان واجد شرایط قرعه‌کشی: {snap['participants']:,} نفر",
             f"🕘 آخرین قرعه‌کشی: {last}",
         ]
         if not (s["score_enabled"] and s["enabled"]):
-            lines += ["", "⚠️ قرعه‌کشی فقط وقتی هم «سیستم امتیاز» و هم «قرعه‌کشی شبانه» روشن باشند اجرا می‌شود."]
+            lines += ["", "⚠️ قرعه‌کشی فقط وقتی هم «سیستم سکه» و هم «قرعه‌کشی شبانه» روشن باشند اجرا می‌شود."]
         rows = [
-            [_btn(f"امتیاز: {_on(s['score_enabled'])}", "adm_lt_toggle:score"),
+            [_btn(f"سکه: {_on(s['score_enabled'])}", "adm_lt_toggle:score"),
              _btn(f"قرعه‌کشی: {_on(s['enabled'])}", "adm_lt_toggle:lottery")],
             [_btn(f"نماینده‌ها: {'✅ شامل' if s['agent_enabled'] else '❌ خارج'}", "adm_lt_toggle:agent")],
             [_btn(f"جایزه: {'💰 کیف پول' if wallet else '🎟 کد تخفیف'} (زدن = تغییر)", "adm_lt_toggle:prize")],
@@ -248,11 +273,15 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
         if not wallet:
             rows.append([_btn(f"⏳ اعتبار کد تخفیف: {s['discount_expiry_hours']} ساعت", "adm_ns:lt_exp")])
         rows += [
-            [_btn(f"⭐ خرید: {snap['buy']}", "adm_ns:lt_buy"),
+            [_btn(f"🪙 خرید: {snap['buy']}", "adm_ns:lt_buy"),
              _btn(f"🔄 تمدید: {snap['ren']}", "adm_ns:lt_ren"),
-             _btn(f"🤝 دعوت: {snap['ref']}", "adm_ns:lt_ref")],
+             _btn(f"🤝 زیرمجموعه: {snap['ref']}", "adm_ns:lt_ref")],
+            [_btn(f"💵 ارزش هر سکه: {snap['coin']['value']:,} تومان", "adm_ns:lt_val")],
+            [_btn(f"⬇️ حداقل تبدیل: {snap['coin']['convert_min']:,}", "adm_ns:lt_cmin"),
+             _btn("⬆️ حداکثر تبدیل: " + (f"{snap['coin']['convert_max']:,}" if snap["coin"]["convert_max"] else "∞"), "adm_ns:lt_cmax")],
+            [_btn(f"🎟 حداقل سکه قرعه‌کشی: {snap['coin']['lottery_min']:,}", "adm_ns:lt_min")],
             [_btn(f"📣 مقصد گزارش: {'گروه' if s['report_chat_id'] else 'ادمین‌ها'}", "adm_lt_report")],
-            [_btn("🏆 جدول امتیازها", "adm_lt_top"), _btn("📜 نتایج قبلی", "adm_lt_history")],
+            [_btn("🏆 جدول سکه‌ها", "adm_lt_top"), _btn("📜 نتایج قبلی", "adm_lt_history")],
             [_btn("▶️ اجرای قرعه‌کشی همین حالا", "adm_lt_run")],
             [_btn("⬅️ بازگشت", "adm_cat:marketing")],
         ]
@@ -386,15 +415,15 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
         s = await asyncio.to_thread(db.get_lottery_settings)
         rows = await asyncio.to_thread(db.get_score_leaderboard, 10, s["agent_enabled"])
         if not rows:
-            body = "هنوز هیچ کاربری امتیاز ندارد."
+            body = "هنوز هیچ کاربر واجد شرایطی برای قرعه‌کشی وجود ندارد."
         else:
             lines = []
             for i, r in enumerate(rows, 1):
                 info = {"username": r["username"], "first_name": r["first_name"], "user_id": r["telegram_id"]}
-                lines.append(f"{MEDALS.get(i, str(i) + '.')} {_who(info)} ({r['telegram_id']}) — {r['score']} امتیاز")
+                lines.append(f"{MEDALS.get(i, str(i) + '.')} {_who(info)} ({r['telegram_id']}) — {r['score']} سکه")
             body = "\n".join(lines)
         await replace_admin_view(
-            call, f"🏆 جدول امتیازها (۱۰ نفر برتر)\n\n{body}",
+            call, f"🏆 جدول سکه‌ها (۱۰ نفر برتر شرکت‌کنندگان)\n\n{body}",
             reply_markup=_kb([[_btn("⬅️ بازگشت", "adm_lottery_settings")]]),
         )
         await call.answer()
@@ -413,7 +442,7 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
             ptype = log["prize_type"] or "wallet"
             lines = [f"📅 {str(log['lottery_date'])[:10]}"]
             for w in winners:
-                lines.append(f"{MEDALS.get(w.get('rank'), '🏅')} {_who(w)} — {w.get('score', 0)} امتیاز — {_fmt_prize(w.get('prize', 0), ptype)}")
+                lines.append(f"{MEDALS.get(w.get('rank'), '🏅')} {_who(w)} — {w.get('score', 0)} سکه — {_fmt_prize(w.get('prize', 0), ptype)}")
             blocks.append("\n".join(lines))
         body = "\n\n".join(blocks) if blocks else "هنوز قرعه‌کشی‌ای انجام نشده."
         await replace_admin_view(
@@ -429,7 +458,7 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
         await replace_admin_view(
             call,
             "▶️ اجرای قرعه‌کشی همین حالا\n\n"
-            "سه نفر برتر همین الان انتخاب می‌شوند، جایزه‌ها داده می‌شود و امتیاز همه‌ی کاربران صفر می‌شود. "
+            "سه نفر برتر همین الان انتخاب می‌شوند، جایزه‌ها داده می‌شود و سکه‌ی همه‌ی شرکت‌کنندگان صفر می‌شود. "
             "این کار قابل بازگشت نیست. مطمئنی؟",
             reply_markup=_kb([
                 [_btn("✅ بله، اجرا کن", "adm_lt_run_ok")],
@@ -452,11 +481,11 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
         if status == "completed":
             note = "✅ قرعه‌کشی انجام شد. نتیجه برای برندگان و مقصد گزارش ارسال شد."
         elif status == "disabled":
-            note = "⚠️ قرعه‌کشی انجام نشد چون «سیستم امتیاز» یا «قرعه‌کشی شبانه» خاموش است."
+            note = "⚠️ قرعه‌کشی انجام نشد چون «سیستم سکه» یا «قرعه‌کشی شبانه» خاموش است."
         elif status == "already_done":
             note = "⚠️ همین چند ثانیه پیش یک قرعه‌کشی اجرا شده است؛ کمی بعد دوباره تلاش کن."
         elif status == "no_winners":
-            note = "⚠️ هیچ کاربر واجد شرایطی با امتیاز بیشتر از صفر پیدا نشد."
+            note = "⚠️ هیچ کاربر واجد شرایطی برای قرعه‌کشی پیدا نشد."
         else:
             note = f"❌ اجرای قرعه‌کشی ناموفق بود: {html.escape(str(result.get('error') or status))}"
         text, markup = await _lottery_view(note)

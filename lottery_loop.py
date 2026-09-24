@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""حلقه امتیاز و قرعه‌کشی شبانه F18."""
+"""حلقه سکه و قرعه‌کشی شبانه F18."""
 import asyncio
 import html
 import logging
@@ -26,7 +26,7 @@ async def _report_result(bot, db, result):
             prize = f"کد تخفیف {w['prize']}٪" + (f" — <code>{w['code']}</code>" if w.get("code") else "")
         else:
             prize = f"{w['prize']:,} تومان شارژ کیف پول"
-        lines.append(f"{medals.get(w['rank'], '🏅')} نفر {w['rank']}: {who} — {w['score']} امتیاز — {prize}")
+        lines.append(f"{medals.get(w['rank'], '🏅')} نفر {w['rank']}: {who} — {w['score']} سکه — {prize}")
     text = "\n".join(lines)
     chat_id = db.get_setting("lottery_report_chat_id", "") or ""
     targets = []

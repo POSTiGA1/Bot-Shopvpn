@@ -27,6 +27,10 @@ class WalletGiftCode(StatesGroup):
     waiting_code = State()
 
 
+class CoinConvert(StatesGroup):
+    waiting_amount = State()
+
+
 class WalletTransfer(StatesGroup):
     waiting_receiver = State()
     waiting_amount = State()
