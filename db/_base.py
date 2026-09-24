@@ -522,6 +522,12 @@ class DatabaseBase:
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
 
+                CREATE TABLE IF NOT EXISTS tutorial_bindings (
+                    tutorial_id INTEGER NOT NULL REFERENCES tutorial_devices(id) ON DELETE CASCADE,
+                    target_key TEXT NOT NULL,
+                    PRIMARY KEY (tutorial_id, target_key)
+                );
+
                 CREATE TABLE IF NOT EXISTS admin_presence (
                     telegram_id INTEGER PRIMARY KEY,
                     last_seen TEXT DEFAULT CURRENT_TIMESTAMP
@@ -1579,6 +1585,26 @@ class DatabaseBase:
             )
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migrated_btn_my_orders_rename', '1')"
+            )
+
+        if conn.execute(
+            "SELECT 1 FROM settings WHERE key='_migrated_tutorial_bindings'"
+        ).fetchone() is None:
+            conn.execute(
+                "INSERT OR IGNORE INTO tutorial_bindings (tutorial_id, target_key) "
+                "SELECT d.id, t.k FROM tutorial_devices d "
+                "JOIN (SELECT 'general' k UNION ALL SELECT 'post_purchase' UNION ALL SELECT 'svc_detail') t"
+            )
+            conn.execute(
+                "UPDATE settings SET value=? WHERE key='btn_tutorial' AND value=?",
+                ("📚 آموزش", "📚 آموزش اتصال"),
+            )
+            conn.execute(
+                "UPDATE settings SET value=? WHERE key='acct_tutorial_text' AND value=?",
+                ("📚 آموزش", "📚 آموزش اتصال"),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migrated_tutorial_bindings', '1')"
             )
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_department_id ON tickets(department_id)")

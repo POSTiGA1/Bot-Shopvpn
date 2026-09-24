@@ -101,7 +101,7 @@ DEFAULT_SETTINGS = {
     "btn_referral": "🤝 زیرمجموعه‌گیری من",
     "btn_wallet": "👛 کیف پول من",
     "btn_admin_panel": "⚙️ پنل مدیریت",
-    "btn_tutorial": "📚 آموزش اتصال",
+    "btn_tutorial": "📚 آموزش",
     "tutorial_menu_enabled": "1",
     "test_enabled": "1",
     # F14: پاکسازی خودکار سرویس‌های منقضی. صفر یعنی خاموش.
@@ -411,13 +411,13 @@ MENU_BUTTON_META = {
     # بقیه‌ی دکمه‌ها متن/رنگ قابل تنظیم و در چیدمان منو قابل جابجایی است.
     "btn_reseller_panel": {"label": "دکمه پنل نمایندگی", "toggle_key": None, "admin_only": False, "has_text": True, "has_style": True, "default_text": "🧑‍💼 پنل نمایندگی"},
     "btn_reseller_tiers": {"label": "دکمه درخواست نمایندگی", "toggle_key": "reseller_request_enabled", "admin_only": False, "has_text": True, "has_style": True, "default_text": "🤝 نمایندگی"},
-    "btn_tutorial": {"label": "دکمه آموزش اتصال", "toggle_key": "tutorial_menu_enabled", "admin_only": False, "has_text": True, "has_style": True, "default_text": "📚 آموزش اتصال"},
+    "btn_tutorial": {"label": "دکمه آموزش", "toggle_key": "tutorial_menu_enabled", "admin_only": False, "has_text": True, "has_style": True, "default_text": "📚 آموزش"},
 }
 # دکمه‌های داخل «حساب کاربری» و صفحه‌ی جزئیات هر سرویس: هرکدام با یک تنظیم
 # جدا فعال/غیرفعال می‌شوند (پیش‌فرض همه فعال). کلید -> (برچسب برای ادمین، مقدار پیش‌فرض)
 ACCOUNT_TOGGLE_KEYS = [
     ("acct_show_orders", "📦 نمایش «سرویس‌ها و سفارش‌های من»", "1"),
-    ("acct_show_tutorial", "📚 نمایش «آموزش اتصال»", "1"),
+    ("acct_show_tutorial", "📚 نمایش «آموزش»", "1"),
     ("acct_show_referral", "🤝 نمایش «زیرمجموعه‌گیری من»", "1"),
     ("acct_show_wallet", "👛 نمایش «کیف پول من»", "1"),
     ("svc_show_renew_full", "🛠 دکمه «تمدید کامل سرویس»", "1"),
@@ -461,7 +461,7 @@ DEFAULT_PAYMENT_METHOD_ORDER = ["card", "card_auto", "abangateway", "blupal", "n
 
 ACCOUNT_HUB_META = {
     "acct_orders": {"label": "سرویس‌ها و سفارش‌های من", "default_text": "📦 سرویس‌ها و سفارش‌های من"},
-    "acct_tutorial": {"label": "آموزش اتصال", "default_text": "📚 آموزش اتصال"},
+    "acct_tutorial": {"label": "آموزش", "default_text": "📚 آموزش"},
     "acct_referral": {"label": "زیرمجموعه‌گیری من", "default_text": "🤝 زیرمجموعه‌گیری من"},
     "acct_wallet": {"label": "کیف پول من", "default_text": "👛 کیف پول من"},
 }

@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import time
+
 from .constants import *
 
 class TicketsMixin:
@@ -112,9 +114,15 @@ class TicketsMixin:
         return "\n\n".join(f"سوال: {it['question']}\nجواب: {it['answer']}" for it in items)
 
     # -----------------------------------------------------------------------
-    # آموزش اتصال به‌تفکیک دستگاه (قابلیت ۸۴) - لیست دستگاه‌های دلخواه ادمین،
-    # هرکدام چند مرحله (هر مرحله متن + عکس/ویدیوی اختیاری).
+    # آموزش‌ها: هر آموزش (جدول tutorial_devices) یک عنوان و چند مرحله‌ی
+    # متن/عکس/ویدیو دارد و از طریق tutorial_bindings به هر تعداد بخش/دکمه
+    # متصل می‌شود (کلیدهای مقصد در tutorial_hub.py تعریف شده‌اند).
     # -----------------------------------------------------------------------
+
+    _TUT_TARGETS_TTL = 30.0
+
+    def _tutorial_cache_clear(self) -> None:
+        self._tut_targets_cache = None
 
 
     def add_tutorial_device(self, name: str, emoji: str = "📱") -> int:
@@ -125,7 +133,17 @@ class TicketsMixin:
                 "INSERT INTO tutorial_devices (name, emoji, sort_order) VALUES (?, ?, ?)",
                 (name, emoji, next_order),
             )
-            return cur.lastrowid
+            new_id = cur.lastrowid
+        self._tutorial_cache_clear()
+        return new_id
+
+
+    def rename_tutorial(self, tutorial_id: int, name: str, emoji: str = None) -> None:
+        with self._get_conn() as conn:
+            if emoji:
+                conn.execute("UPDATE tutorial_devices SET name=?, emoji=? WHERE id=?", (name, emoji, tutorial_id))
+            else:
+                conn.execute("UPDATE tutorial_devices SET name=? WHERE id=?", (name, tutorial_id))
 
 
     def get_tutorial_devices(self, active_only: bool = False):
@@ -145,11 +163,15 @@ class TicketsMixin:
     def set_tutorial_device_active(self, device_id: int, active: bool) -> None:
         with self._get_conn() as conn:
             conn.execute("UPDATE tutorial_devices SET is_active=? WHERE id=?", (1 if active else 0, device_id))
+        self._tutorial_cache_clear()
 
 
     def delete_tutorial_device(self, device_id: int) -> None:
         with self._get_conn() as conn:
+            conn.execute("DELETE FROM tutorial_bindings WHERE tutorial_id=?", (device_id,))
+            conn.execute("DELETE FROM tutorial_steps WHERE device_id=?", (device_id,))
             conn.execute("DELETE FROM tutorial_devices WHERE id=?", (device_id,))
+        self._tutorial_cache_clear()
 
 
     def add_tutorial_step(self, device_id: int, text: str = None, photo_file_id: str = None, video_file_id: str = None) -> int:
@@ -160,7 +182,9 @@ class TicketsMixin:
                 "INSERT INTO tutorial_steps (device_id, step_order, text, photo_file_id, video_file_id) VALUES (?, ?, ?, ?, ?)",
                 (device_id, next_order, text, photo_file_id, video_file_id),
             )
-            return cur.lastrowid
+            new_id = cur.lastrowid
+        self._tutorial_cache_clear()
+        return new_id
 
 
     def get_tutorial_steps(self, device_id: int):
@@ -173,6 +197,68 @@ class TicketsMixin:
     def delete_tutorial_step(self, step_id: int) -> None:
         with self._get_conn() as conn:
             conn.execute("DELETE FROM tutorial_steps WHERE id=?", (step_id,))
+        self._tutorial_cache_clear()
+
+
+    def get_tutorial_targets(self, tutorial_id: int) -> set:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT target_key FROM tutorial_bindings WHERE tutorial_id=?", (tutorial_id,),
+            ).fetchall()
+        return {r["target_key"] for r in rows}
+
+
+    def set_tutorial_target(self, tutorial_id: int, target_key: str, enabled: bool) -> None:
+        with self._get_conn() as conn:
+            if enabled:
+                conn.execute(
+                    "INSERT OR IGNORE INTO tutorial_bindings (tutorial_id, target_key) VALUES (?, ?)",
+                    (tutorial_id, target_key),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM tutorial_bindings WHERE tutorial_id=? AND target_key=?",
+                    (tutorial_id, target_key),
+                )
+        self._tutorial_cache_clear()
+
+
+    def toggle_tutorial_target(self, tutorial_id: int, target_key: str) -> bool:
+        """وضعیت اتصال را برعکس می‌کند و وضعیت جدید (متصل=True) را برمی‌گرداند."""
+        enabled = target_key not in self.get_tutorial_targets(tutorial_id)
+        self.set_tutorial_target(tutorial_id, target_key, enabled)
+        return enabled
+
+
+    def get_tutorials_for_target(self, target_key: str):
+        """آموزش‌های فعالِ دارای حداقل یک مرحله که به این مقصد متصل‌اند."""
+        with self._get_conn() as conn:
+            return conn.execute(
+                "SELECT d.* FROM tutorial_devices d "
+                "JOIN tutorial_bindings b ON b.tutorial_id = d.id "
+                "WHERE b.target_key=? AND d.is_active=1 "
+                "AND EXISTS (SELECT 1 FROM tutorial_steps s WHERE s.device_id = d.id) "
+                "ORDER BY d.sort_order, d.id",
+                (target_key,),
+            ).fetchall()
+
+
+    def get_tutorial_bound_targets(self) -> set:
+        """مجموعه‌ی مقصدهایی که حداقل یک آموزش فعال (با مرحله) دارند؛ برای
+        هر آپدیت ورودی خوانده می‌شود، پس چند ثانیه در حافظه کش می‌شود."""
+        cache = getattr(self, "_tut_targets_cache", None)
+        now = time.monotonic()
+        if cache is not None and now - cache[0] < self._TUT_TARGETS_TTL:
+            return cache[1]
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT b.target_key FROM tutorial_bindings b "
+                "JOIN tutorial_devices d ON d.id = b.tutorial_id AND d.is_active=1 "
+                "WHERE EXISTS (SELECT 1 FROM tutorial_steps s WHERE s.device_id = d.id)"
+            ).fetchall()
+        keys = {r["target_key"] for r in rows}
+        self._tut_targets_cache = (now, keys)
+        return keys
 
     # -----------------------------------------------------------------------
     # آنلاین‌بودن ادمین‌ها (برای مسیریابی چت زنده به اولین ادمین/مالک آنلاین)
