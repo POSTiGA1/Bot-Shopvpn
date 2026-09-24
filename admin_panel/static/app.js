@@ -135,6 +135,7 @@ const ICONS = {
   check: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>',
   empty: '<path d="M22 12h-6l-2 3h-4l-2-3H2"></path><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z"></path>',
   buttons: '<rect x="3" y="4" width="7" height="7" rx="2"></rect><rect x="14" y="4" width="7" height="7" rx="2"></rect><rect x="3" y="15" width="7" height="7" rx="2"></rect><rect x="14" y="15" width="7" height="7" rx="2"></rect>',
+  bottexts: '<line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="14" y2="18"></line>',
 };
 const svg = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
 const fmt = n => (n === null || n === undefined) ? '—' : Number(n).toLocaleString('fa-IR');
@@ -366,6 +367,7 @@ const NAV = [
   // تنظیمات و سیستم — نگهداری، دسترسی و پیکربندی
   { key: 'settings', label: 'تنظیمات و برندینگ', icon: 'settings', role: 'settings', section: 'تنظیمات و سیستم' },
   { key: 'buttons', label: 'دکمه‌های ربات', icon: 'buttons', role: 'settings', section: 'تنظیمات و سیستم' },
+  { key: 'bottexts', label: 'متن‌های ربات', icon: 'bottexts', role: 'settings', section: 'تنظیمات و سیستم' },
   { key: 'salessettings', label: 'تنظیمات فروش', icon: 'settings', role: 'settings', section: 'تنظیمات و سیستم' },
   { key: 'webadmins', label: 'کاربران پنل', icon: 'webadmins', role: 'owner', section: 'تنظیمات و سیستم' },
   { key: 'tgadmins', label: 'ادمین‌های ربات', icon: 'webadmins', role: 'owner', section: 'تنظیمات و سیستم' },
@@ -883,6 +885,7 @@ async function renderPage(tab) {
       case 'system': return await renderSystem();
       case 'settings': return await renderSettings();
       case 'buttons': return await renderButtons();
+      case 'bottexts': return await renderBotTexts();
       case 'salessettings': return await renderSalesSettings();
       case 'banners': return await renderBanners();
       case 'logs': return await renderLogs();
@@ -930,7 +933,7 @@ async function renderResellerSelfService() {
     <div class="card" style="margin-top:16px">
       <div class="card-head"><h3>🔐 سرویس‌های من</h3></div>
       <div class="admin-list">
-        ${services.length ? services.map(c => `<div class="admin-list-row"><div><b>${esc(c.display_name || c.username)}</b><div class="card-sub mono">${esc(c.username)} · ${fmt(c.volume_gb)}GB · ${c.duration_days ? fmt(c.duration_days)+' روز' : 'نامحدود'}</div></div><div class="admin-list-row-actions"><button class="btn btn-sm" data-self-toggle="${c.id}">${c.enabled ? 'غیرفعال' : 'فعال'}</button><button class="btn btn-sm" data-self-rename="${c.id}">تغییر نام</button><button class="btn btn-sm" data-self-copy="${c.id}">لینک</button></div></div>`).join('') : '<div class="empty-state">هنوز سرویسی برای خودت ساخته نشده است.</div>'}
+        ${services.length ? services.map(c => `<div class="admin-list-row"><div><b>${esc(c.display_name || c.username)}</b><div class="card-sub mono">${esc(c.username)} · ${fmt(c.volume_gb)}GB · ${c.duration_days ? fmt(c.duration_days)+' روز' : 'نامحدود'}</div></div><div class="admin-list-row-actions"><button class="btn btn-sm" data-self-toggle="${c.id}">${c.enabled ? 'غیرفعال' : 'فعال'}</button><button class="btn btn-sm" data-self-rename="${c.id}">تغییر نام</button><button class="btn btn-sm" data-self-copy="${c.id}">لینک</button><button class="btn btn-danger btn-sm" data-self-delete="${c.id}">حذف</button></div></div>`).join('') : '<div class="empty-state">هنوز سرویسی برای خودت ساخته نشده است.</div>'}
       </div>
     </div>
   `);
@@ -953,6 +956,25 @@ async function renderResellerSelfService() {
   $$('[data-self-rename]', content()).forEach(btn => btn.addEventListener('click', async () => {
     const name = prompt('نام نمایشی جدید را وارد کن:'); if (!name) return;
     try { await apiPost(`/reseller/self-service/services/${btn.dataset.selfRename}/rename`, { name }); await renderResellerSelfService(); } catch(e){handleErr(e);}
+  }));
+  $$('[data-self-delete]', content()).forEach(btn => btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      const q = await apiGet(`/reseller/self-service/services/${btn.dataset.selfDelete}/delete-quote`);
+      openModal('حذف سرویس', `<div class="form-grid"><div>این سرویس برای همیشه از پنل VPN و از لیست تو حذف می‌شود و غیرقابل بازگشت است.</div><div style="white-space:pre-line">${esc(q.text || 'با حذف این سرویس، اعتباری برگردانده نمی‌شود.')}</div><div class="admin-list-row-actions"><button class="btn btn-sm" id="rs-del-cancel">انصراف</button><button class="btn btn-danger btn-sm" id="rs-del-ok">حذف نهایی</button></div></div>`, (body, close) => {
+        $('#rs-del-cancel', body).addEventListener('click', close);
+        $('#rs-del-ok', body).addEventListener('click', async ev => {
+          ev.target.disabled = true;
+          try {
+            const r = await apiDelete(`/reseller/self-service/services/${btn.dataset.selfDelete}`);
+            close();
+            toast(r.refund_text ? `سرویس حذف شد. ${r.refund_text}` : 'سرویس حذف شد.');
+            await renderResellerSelfService();
+          } catch (e) { handleErr(e); ev.target.disabled = false; }
+        });
+      });
+    } catch (e) { handleErr(e); }
+    btn.disabled = false;
   }));
   $$('[data-self-copy]', content()).forEach(btn => btn.addEventListener('click', async () => {
     const service = services.find(x => String(x.id) === String(btn.dataset.selfCopy)); if (!service) return;
@@ -1064,7 +1086,26 @@ function resellerTierMeta() {
   };
 }
 
-function renderResellerTierDashboard() {
+function resellerBalanceChartHtml(balance) {
+  if (!balance) return '<div class="card-sub">داده‌ای در دسترس نیست.</div>';
+  if (balance.model === 'fixed_product') {
+    const rows = balance.products || [];
+    if (!rows.length) return '<div class="card-sub">محصول فعالی برای این نمایندگی ثبت نشده.</div>';
+    const max = Math.max(...rows.map(r => r.qty_remaining), 1);
+    return rows.map(r => `
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+          <span>${esc(r.name)}</span><span class="mono">${fmt(r.qty_remaining)}</span>
+        </div>
+        <div style="height:10px;border-radius:5px;background:var(--border,rgba(128,128,128,.15));overflow:hidden">
+          <div style="height:100%;border-radius:5px;background:var(--brand,#8B5CF6);width:${Math.max(2, (r.qty_remaining / max) * 100)}%"></div>
+        </div>
+      </div>`).join('');
+  }
+  return `<div class="stat-card"><span class="label">اعتبار حجمی باقیمانده</span><span class="value mono">${fmt(balance.credit_gb || 0)} <small>GB</small></span></div>`;
+}
+
+async function renderResellerTierDashboard() {
   const p = ME.reseller_profile || {};
   const meta = resellerTierMeta();
   const vip = meta.code === 'vip';
@@ -1085,6 +1126,16 @@ function renderResellerTierDashboard() {
       <div class="card reseller-kpi"><span>سفارش موفق</span><strong>${fmt(p.paid_orders)}</strong><em>پرداخت‌های تاییدشده</em></div>
       <div class="card reseller-kpi"><span>سرویس ساخته‌شده</span><strong>${fmt(p.configs_created)}</strong><em>از اعتبار نمایندگی</em></div>
       <div class="card reseller-kpi"><span>${vip ? 'حجم مصرف‌شده' : 'وضعیت تامین'}</span><strong>${vip ? fmt(p.volume_sold_gb) + ' <small>GB</small>' : esc(supplyText)}</strong><em>${vip ? 'حجم سرویس‌های ساخته‌شده' : 'موجودی بر اساس محصول منتخب'}</em></div>
+    </div>
+    <div class="grid grid-2" style="gap:16px;align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-head"><h3>📈 روند فروش (۱۴ روز اخیر)</h3></div>
+        <div id="reseller-sales-chart"><div class="card-sub">در حال بارگذاری...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>💼 موجودی نمایندگی</h3></div>
+        <div id="reseller-balance-chart"><div class="card-sub">در حال بارگذاری...</div></div>
+      </div>
     </div>
     <div class="grid grid-2 reseller-command-grid">
       <div class="card reseller-command-card">
@@ -1111,11 +1162,18 @@ function renderResellerTierDashboard() {
     </div>
   `);
   $$('[data-go]', content()).forEach(b => b.onclick = () => goTo(b.dataset.go));
+  try {
+    const chart = await apiGet('/reseller/dashboard-chart');
+    const salesEl = $('#reseller-sales-chart', content());
+    if (salesEl) salesEl.innerHTML = trendChartSvg(chart.sales_trend.points);
+    const balEl = $('#reseller-balance-chart', content());
+    if (balEl) balEl.innerHTML = resellerBalanceChartHtml(chart.balance);
+  } catch (e) { /* اگر چارت با خطا مواجه شد، داشبورد بدون آن قابل استفاده می‌ماند */ }
 }
 
 async function renderDashboard() {
   if (ME?.tenant && ['gold','vip'].includes(String(ME?.reseller_profile?.tier_code || '').toLowerCase())) {
-    renderResellerTierDashboard();
+    await renderResellerTierDashboard();
     return;
   }
   const range = getDashRange();
@@ -1170,6 +1228,8 @@ function appendExtraStatsPanel(s) {
         <div style="display:flex;justify-content:space-between;padding:6px 0"><span>تیکت باز</span><span class="mono">${fmt(s.tickets_open)}</span></div>
         <div style="display:flex;justify-content:space-between;padding:6px 0"><span>میانگین زمان پاسخ اول</span><span class="mono">${respText}</span></div>
         <div style="display:flex;justify-content:space-between;padding:6px 0"><span>نرخ مشتری تکراری</span><span class="mono">${s.repeat_customer_rate}٪ (${fmt(s.repeat_customers)}/${fmt(s.total_customers)})</span></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0"><span>جمع کل کدهای تخفیف داده‌شده</span><span class="mono">${fmt(s.total_discount_given)} تومان</span></div>
+        <div style="display:flex;justify-content:space-between;padding:6px 0"><span>تعداد کل کدهای تخفیف داده‌شده</span><span class="mono">${fmt(s.discount_orders_count)} سفارش</span></div>
       </div>
     </div>
     ${low.length ? `<div class="card-sub" style="margin-top:12px;color:#FB7185">⚠️ موجودی کم: ${low.map(p => esc(p.name)).join('، ')}</div>` : ''}
@@ -2282,6 +2342,34 @@ async function mountServerMap() {
 
 /* ============================================================ orders === */
 let ordersStatus = 'pending';
+let ordersFilters = { q: '', product_id: '', date_from: '', date_to: '' };
+let ordersProductsCache = null;
+const orderSurveySummaryBtn = () => `<button class="btn btn-sm" data-survey-summary="1">📊 نتایج نظرسنجی</button>`;
+function orderSurveyBtn(o, canAct) {
+  if (o.survey_rating) return `<span class="badge badge-approved">⭐ ${fmt(o.survey_rating)} / ۵</span>`;
+  if (!canAct) return o.survey_sent ? '<span class="mono">ارسال شد</span>' : '<span class="mono">-</span>';
+  return `<button class="btn btn-sm" data-survey="${o.id}">${o.survey_sent ? 'ارسال مجدد نظرسنجی' : '🗳 ارسال نظرسنجی'}</button>`;
+}
+async function openSurveySummaryModal() {
+  try {
+    const rows = await apiGet('/order-surveys/summary');
+    openModal('نتایج نظرسنجی به تفکیک پنل', `
+      <div class="table-wrap"><table>
+        <thead><tr><th>پنل / لوکیشن</th><th>ارسال‌شده</th><th>پاسخ‌داده‌شده</th><th>میانگین امتیاز</th></tr></thead>
+        <tbody>${rows.map(r => `<tr><td>${esc(r.panel_name)}</td><td class="mono">${fmt(r.sent)}</td><td class="mono">${fmt(r.answered)}</td><td class="mono">${r.avg_rating === null ? '—' : '⭐ ' + fmt(r.avg_rating) + ' / ۵'}</td></tr>`).join('') || `<tr><td colspan="4" class="empty-state">هنوز نظرسنجی‌ای ارسال نشده</td></tr>`}</tbody>
+      </table></div>`);
+  } catch (e) { handleErr(e); }
+}
+document.addEventListener('click', async e => {
+  const send = e.target.closest('[data-survey]');
+  if (send) {
+    send.disabled = true;
+    try { await apiPost(`/orders/${send.dataset.survey}/survey`); toast('نظرسنجی برای کاربر ارسال شد.'); renderOrders(); }
+    catch (err) { handleErr(err); send.disabled = false; }
+    return;
+  }
+  if (e.target.closest('[data-survey-summary]')) openSurveySummaryModal();
+});
 function tierDiscountText(o) {
   return Number(o.tier_discount_amount) > 0 ? `🏷 تخفیف سطح: -${fmt(o.tier_discount_amount)}` : '';
 }
@@ -2291,16 +2379,31 @@ function tierDiscountNote(o) {
 }
 async function renderOrders() {
   const canAct = hasPerm('orders');
-  const orders = await apiGet(`/orders?status=${ordersStatus}`);
+  const params = new URLSearchParams({ status: ordersStatus });
+  if (ordersFilters.q.trim()) params.set('q', ordersFilters.q.trim());
+  if (ordersFilters.product_id) params.set('product_id', ordersFilters.product_id);
+  if (ordersFilters.date_from) params.set('date_from', ordersFilters.date_from);
+  if (ordersFilters.date_to) params.set('date_to', ordersFilters.date_to);
+  const orders = await apiGet(`/orders?${params.toString()}`);
   if (loadTheme().theme === 'brutalist') return renderOrdersBrutalist(orders, canAct);
   if (loadTheme().theme === 'bento') return renderOrdersBento(orders, canAct);
+  if (!ordersProductsCache) { try { ordersProductsCache = await apiGet('/products'); } catch (_) { ordersProductsCache = []; } }
+  const filterHtml = `<div class=\"card\" style=\"margin-bottom:12px\"><div style=\"display:flex;gap:8px;flex-wrap:wrap;align-items:end\">
+    <label class=\"field\" style=\"min-width:220px;flex:1\"><span>جستجوی کاربر / شماره سفارش</span><input class=\"input\" id=\"orders-q\" value=\"${esc(ordersFilters.q)}\" placeholder=\"نام کاربری، شناسه کاربر یا #سفارش\"></label>
+    <label class=\"field\" style=\"min-width:190px\"><span>محصول</span><select class=\"input\" id=\"orders-product\"><option value=\"\">همه محصولات</option>${(ordersProductsCache || []).map(p => `<option value=\"${p.id}\" ${String(ordersFilters.product_id)===String(p.id)?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label>
+    <label class=\"field\"><span>از تاریخ</span><input class=\"input\" id=\"orders-from\" type=\"date\" value=\"${esc(ordersFilters.date_from)}\"></label>
+    <label class=\"field\"><span>تا تاریخ</span><input class=\"input\" id=\"orders-to\" type=\"date\" value=\"${esc(ordersFilters.date_to)}\"></label>
+    <button class=\"btn btn-primary\" id=\"orders-filter-apply\">اعمال فیلتر</button><button class=\"btn\" id=\"orders-filter-clear\">پاک کردن</button>
+  </div></div>`;
   setContent(`
+    ${filterHtml}
     <div class="tabs">
       ${['pending', 'approved', 'rejected'].map(s => `<button class="tab-btn ${s === ordersStatus ? 'active' : ''}" data-status="${s}">${{ pending: 'در انتظار', approved: 'تایید شده', rejected: 'رد شده' }[s]}</button>`).join('')}
+      ${orderSurveySummaryBtn()}
     </div>
     <div class="card">
       <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>کاربر</th><th>محصول</th><th>تعداد</th><th>مبلغ</th><th>تاریخ</th><th>رسید</th>${canAct && ordersStatus === 'pending' ? '<th>عملیات</th>' : ''}</tr></thead>
+        <thead><tr><th>#</th><th>کاربر</th><th>محصول</th><th>تعداد</th><th>مبلغ</th><th>تاریخ</th><th>رسید</th>${canAct && ordersStatus === 'pending' ? '<th>عملیات</th>' : ''}${ordersStatus === 'approved' ? '<th>نظرسنجی</th>' : ''}</tr></thead>
         <tbody>
           ${orders.map(o => `<tr>
             <td class="mono">#${o.id} ${historyBtn('order', o.id)}</td>
@@ -2310,6 +2413,7 @@ async function renderOrders() {
             <td class="mono">${fmt(o.final_price ?? o.base_price)}${tierDiscountNote(o)}</td>
             <td class="mono">${fmtDate(o.created_at)}</td>
             <td>${o.receipt_file_id ? `<button class="btn btn-sm" data-receipt="order:${o.id}">مشاهده رسید</button>` : '<span class="mono">-</span>'}</td>
+            ${ordersStatus === 'approved' ? `<td>${orderSurveyBtn(o, canAct)}</td>` : ''}
             ${canAct && ordersStatus === 'pending' ? `<td>
               <button class="btn btn-primary btn-sm" data-approve="${o.id}">تایید</button>
               <button class="btn btn-danger btn-sm" data-reject="${o.id}">رد</button>
@@ -2320,6 +2424,9 @@ async function renderOrders() {
     </div>
   `);
   $$('.tab-btn', content()).forEach(b => b.addEventListener('click', () => { ordersStatus = b.dataset.status; renderOrders(); }));
+  const applyFilters = () => { ordersFilters = { q: $('#orders-q', content()).value || '', product_id: $('#orders-product', content()).value || '', date_from: $('#orders-from', content()).value || '', date_to: $('#orders-to', content()).value || '' }; renderOrders(); };
+  $('#orders-filter-apply', content())?.addEventListener('click', applyFilters);
+  $('#orders-filter-clear', content())?.addEventListener('click', () => { ordersFilters = { q: '', product_id: '', date_from: '', date_to: '' }; renderOrders(); });
   $$('[data-receipt]', content()).forEach(b => b.addEventListener('click', () => {
     const [kind, id] = b.dataset.receipt.split(':');
     showReceiptModal(kind, id);
@@ -2343,6 +2450,7 @@ function renderOrdersBento(orders, canAct) {
     <div class="bn-hero">
       <div><h2>سفارش‌ها</h2><p>${fmt(orders.length)} مورد · جمع ${fmt(total)} تومان</p></div>
       <div class="bn-seg">${['pending', 'approved', 'rejected'].map(s => `<button class="bn-seg-btn ${s === ordersStatus ? 'active' : ''}" data-status="${s}">${ORDERS_STATUS_LABEL[s]}</button>`).join('')}</div>
+      ${orderSurveySummaryBtn()}
     </div>
     <div class="bn-list">
       ${orders.map((o, i) => `
@@ -2357,6 +2465,7 @@ function renderOrdersBento(orders, canAct) {
               <span class="bn-row-amount mono">${fmt(o.final_price ?? o.base_price)} ت</span>
               ${o.receipt_file_id ? `<button class="bn-btn bn-btn-ghost" data-receipt="order:${o.id}">رسید</button>` : ''}
               ${historyBtn('order', o.id)}
+              ${ordersStatus === 'approved' ? orderSurveyBtn(o, canAct) : ''}
             </div>
           </div>
           ${canAct && ordersStatus === 'pending' ? `<div class="bn-row-actions">
@@ -2411,6 +2520,7 @@ function renderOrdersBrutalist(orders, canAct) {
       <div class="bru-seg" role="tablist">
         ${['pending', 'approved', 'rejected'].map(s => `<button class="bru-seg-btn ${s === ordersStatus ? 'active' : ''}" data-status="${s}">${ORDERS_STATUS_LABEL[s]}</button>`).join('')}
       </div>
+      ${orderSurveySummaryBtn()}
     </div>
 
     <div class="bru-ticket-grid">
@@ -2430,6 +2540,7 @@ function renderOrdersBrutalist(orders, canAct) {
           </div>
           <div class="bru-ticket-actions">
             ${o.receipt_file_id ? `<button class="btn btn-sm" data-receipt="order:${o.id}">رسید</button>` : ''}
+            ${ordersStatus === 'approved' ? orderSurveyBtn(o, canAct) : ''}
             ${canAct && ordersStatus === 'pending' ? `
               <button class="bru-stamp bru-stamp-ok" data-approve="${o.id}" style="--r:-6deg">تایید</button>
               <button class="bru-stamp bru-stamp-no" data-reject="${o.id}" style="--r:4deg">رد</button>
@@ -2606,10 +2717,16 @@ function renderTopupsBrutalist(topups, canAct) {
 }
 
 /* ============================================================= users === */
-let usersState = { q: '', status: 'all', page: 1 };
+let usersState = { q: '', status: 'all', page: 1, sort: 'newest' };
 const USERS_STATUS_LABEL = { all: 'همه', active: 'فعال', expired: 'منقضی', blocked: 'مسدود' };
+const USERS_SORT_OPTIONS = [['newest', 'جدیدترین'], ['balance', 'بیشترین موجودی'], ['purchase', 'بیشترین میزان خرید'], ['active_services', 'بیشترین سرویس فعال'], ['topup', 'بیشترین میزان شارژ']];
+const usersSortSelect = () => `<select class="input" id="user-sort">${USERS_SORT_OPTIONS.map(([v, l]) => `<option value="${v}" ${v === usersState.sort ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+const bindUsersSort = () => {
+  const el = $('#user-sort');
+  if (el) el.addEventListener('change', e => { usersState.sort = e.target.value; usersState.page = 1; renderUsers(); });
+};
 async function renderUsers() {
-  const res = await apiGet(`/users?q=${encodeURIComponent(usersState.q)}&status=${usersState.status}&page=${usersState.page}`);
+  const res = await apiGet(`/users?q=${encodeURIComponent(usersState.q)}&status=${usersState.status}&page=${usersState.page}&sort=${usersState.sort}`);
   const pages = Math.max(Math.ceil(res.total / res.limit), 1);
   if (loadTheme().theme === 'brutalist') return renderUsersBrutalist(res, pages);
   if (loadTheme().theme === 'bento') return renderUsersBento(res, pages);
@@ -2619,13 +2736,18 @@ async function renderUsers() {
       <select class="input" id="user-status">
         ${[['all', 'همه'], ['active', 'فعال'], ['expired', 'منقضی'], ['blocked', 'مسدود']].map(([v, l]) => `<option value="${v}" ${v === usersState.status ? 'selected' : ''}>${l}</option>`).join('')}
       </select>
+      ${usersSortSelect()}
     </div>
     <div class="card">
       <div class="table-wrap"><table>
-        <thead><tr><th>آیدی</th><th>یوزرنیم</th><th>نام</th><th>وضعیت</th><th>عضویت</th><th>عملیات</th></tr></thead>
+        <thead><tr><th>آیدی</th><th>یوزرنیم</th><th>نام</th><th>وضعیت</th><th>کیف پول</th><th>میزان خرید</th><th>سرویس فعال</th><th>میزان شارژ</th><th>عضویت</th><th>عملیات</th></tr></thead>
         <tbody>${res.items.map(u => `<tr>
           <td class="mono">${u.telegram_id}</td><td>${esc(u.username || '—')}</td><td>${esc(u.first_name || '—')}</td>
           <td>${u.is_blocked ? '<span class="badge badge-rejected">مسدود</span>' : '<span class="badge badge-approved">فعال</span>'}</td>
+          <td class="mono">${fmt(u.referral_credit)}</td>
+          <td class="mono">${fmt(u.total_purchase)}</td>
+          <td class="mono">${fmt(u.active_services)}</td>
+          <td class="mono">${fmt(u.total_topup)}</td>
           <td class="mono">${fmtDate(u.joined_at)}</td>
           <td>
             <button class="btn btn-ghost btn-sm" data-detail="${u.telegram_id}">جزئیات</button>
@@ -2633,13 +2755,14 @@ async function renderUsers() {
               ? `<button class="btn btn-sm" data-unblock="${u.telegram_id}">رفع مسدودی</button>`
               : `<button class="btn btn-danger btn-sm" data-block="${u.telegram_id}">مسدودسازی</button>`) : ''}
           </td>
-        </tr>`).join('') || `<tr><td colspan="6" class="empty-state"><div class="icon">${svg('empty')}</div>کاربری یافت نشد</td></tr>`}</tbody>
+        </tr>`).join('') || `<tr><td colspan="10" class="empty-state"><div class="icon">${svg('empty')}</div>کاربری یافت نشد</td></tr>`}</tbody>
       </table></div>
       <div class="pager">${Array.from({ length: pages }, (_, i) => i + 1).map(p => `<button class="btn btn-sm ${p === usersState.page ? 'btn-primary' : ''}" data-page="${p}">${p}</button>`).join('')}</div>
     </div>
   `);
   $('#user-search').addEventListener('keydown', e => { if (e.key === 'Enter') { usersState.q = e.target.value; usersState.page = 1; renderUsers(); } });
   $('#user-status').addEventListener('change', e => { usersState.status = e.target.value; usersState.page = 1; renderUsers(); });
+  bindUsersSort();
   $$('[data-page]', content()).forEach(b => b.addEventListener('click', () => { usersState.page = Number(b.dataset.page); renderUsers(); }));
   $$('[data-block]', content()).forEach(b => b.addEventListener('click', async () => {
     try { await apiPost(`/users/${b.dataset.block}/block`); toast('کاربر مسدود شد.'); renderUsers(); } catch (e) { handleErr(e); }
@@ -2658,13 +2781,14 @@ function renderUsersBento(res, pages) {
       <div class="bn-seg">${['all', 'active', 'expired', 'blocked'].map(s => `<button class="bn-seg-btn ${s === usersState.status ? 'active' : ''}" data-ustatus="${s}">${USERS_STATUS_LABEL[s]}</button>`).join('')}</div>
     </div>
     <input class="bn-search" id="user-search" placeholder="جستجو: آیدی، یوزرنیم، نام..." value="${esc(usersState.q)}" style="margin-bottom:14px">
+    ${usersSortSelect()}
     <div class="bn-list">
       ${res.items.map((u, i) => `
         <div class="bn-row bn-card-anim" style="animation-delay:${Math.min(i * 25, 240)}ms">
           ${bnAvatar((u.first_name || u.username || '؟').trim().charAt(0).toUpperCase(), i)}
           <div class="bn-row-main">
             <span class="bn-row-title">${esc(u.username ? '@' + u.username : (u.first_name || '—'))}</span>
-            <span class="bn-row-sub">ID: ${u.telegram_id} · عضویت ${fmtDate(u.joined_at)}</span>
+            <span class="bn-row-sub">ID: ${u.telegram_id} · عضویت ${fmtDate(u.joined_at)} · کیف پول ${fmt(u.referral_credit)} · خرید ${fmt(u.total_purchase)} · سرویس فعال ${fmt(u.active_services)} · شارژ ${fmt(u.total_topup)}</span>
           </div>
           <div class="bn-row-trail">
             ${bnPill(u.is_blocked ? 'مسدود' : 'فعال', u.is_blocked ? 'no' : 'ok')}
@@ -2680,6 +2804,7 @@ function renderUsersBento(res, pages) {
   `);
   $('#user-search').addEventListener('keydown', e => { if (e.key === 'Enter') { usersState.q = e.target.value; usersState.page = 1; renderUsers(); } });
   $$('.bn-seg-btn[data-ustatus]', content()).forEach(b => b.addEventListener('click', () => { usersState.status = b.dataset.ustatus; usersState.page = 1; renderUsers(); }));
+  bindUsersSort();
   $$('[data-page]', content()).forEach(b => b.addEventListener('click', () => { usersState.page = Number(b.dataset.page); renderUsers(); }));
   $$('[data-block]', content()).forEach(b => b.addEventListener('click', async () => {
     try { await apiPost(`/users/${b.dataset.block}/block`); toast('کاربر مسدود شد.'); renderUsers(); } catch (e) { handleErr(e); }
@@ -2720,6 +2845,7 @@ function renderUsersBrutalist(res, pages) {
       <div class="bru-seg" role="tablist">
         ${['all', 'active', 'expired', 'blocked'].map(s => `<button class="bru-seg-btn ${s === usersState.status ? 'active' : ''}" data-ustatus="${s}">${USERS_STATUS_LABEL[s]}</button>`).join('')}
       </div>
+      ${usersSortSelect()}
     </div>
 
     <div class="bru-user-grid">
@@ -2730,6 +2856,10 @@ function renderUsersBrutalist(res, pages) {
           <div class="bru-user-name">${esc(u.username ? '@' + u.username : (u.first_name || '—'))}</div>
           <div class="bru-user-id mono">ID: ${u.telegram_id}</div>
           <div class="bru-user-joined mono">عضویت: ${fmtDate(u.joined_at)}</div>
+          <div class="bru-user-joined mono">کیف پول: ${fmt(u.referral_credit)}</div>
+          <div class="bru-user-joined mono">میزان خرید: ${fmt(u.total_purchase)}</div>
+          <div class="bru-user-joined mono">سرویس فعال: ${fmt(u.active_services)}</div>
+          <div class="bru-user-joined mono">میزان شارژ: ${fmt(u.total_topup)}</div>
           <div class="bru-user-actions">
             <button class="btn btn-sm btn-ghost" data-detail="${u.telegram_id}">جزئیات</button>
             ${hasPerm('users') ? (u.is_blocked
@@ -2744,6 +2874,7 @@ function renderUsersBrutalist(res, pages) {
   `);
   $('#user-search').addEventListener('keydown', e => { if (e.key === 'Enter') { usersState.q = e.target.value; usersState.page = 1; renderUsers(); } });
   $$('.bru-seg-btn[data-ustatus]', content()).forEach(b => b.addEventListener('click', () => { usersState.status = b.dataset.ustatus; usersState.page = 1; renderUsers(); }));
+  bindUsersSort();
   $$('[data-page]', content()).forEach(b => b.addEventListener('click', () => { usersState.page = Number(b.dataset.page); renderUsers(); }));
   $$('[data-block]', content()).forEach(b => b.addEventListener('click', async () => {
     try { await apiPost(`/users/${b.dataset.block}/block`); toast('کاربر مسدود شد.'); renderUsers(); } catch (e) { handleErr(e); }
@@ -2770,6 +2901,11 @@ async function showUserDetail(tgId) {
     { label: 'تست دریافتی', val: u.test_used ? 'بله' : 'خیر' },
   ];
   if (d.is_reseller) statCards.push({ label: 'اعتبار نمایندگی', val: `${fmt(d.reseller_credit)} گیگ` });
+  const ws = d.wallet_status || {};
+  if (ws.limit > 0 || ws.debt > 0) {
+    statCards.push({ label: 'سقف اعتبار پس‌پرداخت', val: `${fmt(ws.limit)} تومان` });
+    statCards.push({ label: 'بدهی فعلی', val: `${fmt(ws.debt)} تومان` });
+  }
   if (u.referred_by) statCards.push({ label: 'دعوت‌شده توسط', val: `#${u.referred_by}` });
 
   openModal(`کاربر ${esc(displayName)}`, `
@@ -2794,6 +2930,11 @@ async function showUserDetail(tgId) {
       <button class="btn btn-primary" id="wallet-submit">اعمال</button>
     </div>` : ''}
 
+    ${hasPerm('resellers') ? `<div class="form-row" style="margin:16px 0">
+      <input class="input" id="credit-limit-amount" type="number" min="0" value="${u.credit_limit || 0}" placeholder="سقف اعتبار پس‌پرداخت (تومان، ۰ = سقف پیش‌فرض سطح)">
+      <button class="btn btn-primary" id="credit-limit-submit">ثبت سقف</button>
+    </div>` : ''}
+
     ${isSenior ? `<div class="form-row" style="margin:16px 0">
       <input class="input" id="user-msg-text" type="text" placeholder="متن پیام مستقیم به این کاربر...">
       <button class="btn btn-primary" id="user-msg-submit">ارسال پیام</button>
@@ -2816,12 +2957,23 @@ async function showUserDetail(tgId) {
     <h4 class="ud-section-title">شارژهای کیف پول</h4>
     <div class="table-wrap"><table><thead><tr><th>#</th><th>مبلغ</th><th>وضعیت</th><th>تاریخ</th></tr></thead>
     <tbody>${(d.topups || []).slice(0, 10).map(t => `<tr><td class="mono">#${t.id}</td><td class="mono">${fmt(t.amount)}</td><td>${esc(t.status)}</td><td class="mono">${fmtDate(t.created_at)}</td></tr>`).join('') || `<tr><td colspan="4" class="empty-state"><div class="icon">${svg('empty')}</div>شارژی ثبت نشده</td></tr>`}</tbody></table></div>
+
+    <h4 class="ud-section-title">لاگ تغییرات موجودی کیف پول</h4>
+    <div class="table-wrap"><table><thead><tr><th>نوع</th><th>تغییر</th><th>قبل</th><th>بعد</th><th>توضیح</th><th>تاریخ</th></tr></thead>
+    <tbody>${(d.wallet_transactions || []).map(t => `<tr><td>${esc(t.label)}</td><td class="mono" dir="ltr">${t.delta > 0 ? '+' : ''}${fmt(t.delta)}</td><td class="mono">${fmt(t.balance_before)}</td><td class="mono">${fmt(t.balance_after)}</td><td>${esc(t.note || '-')}</td><td class="mono">${fmtDate(t.created_at)}</td></tr>`).join('') || `<tr><td colspan="6" class="empty-state"><div class="icon">${svg('empty')}</div>تراکنشی ثبت نشده</td></tr>`}</tbody></table></div>
   `, (body, close) => {
     const submitBtn = $('#wallet-submit', body);
     if (submitBtn) submitBtn.addEventListener('click', async () => {
       const delta = Number($('#wallet-delta', body).value);
       if (!delta) return;
       try { await apiPost(`/users/${tgId}/wallet`, { delta }); toast('کیف پول به‌روزرسانی شد.'); close(); }
+      catch (e) { handleErr(e); }
+    });
+    const creditLimitBtn = $('#credit-limit-submit', body);
+    if (creditLimitBtn) creditLimitBtn.addEventListener('click', async () => {
+      const amount = Number($('#credit-limit-amount', body).value);
+      if (!Number.isFinite(amount) || amount < 0) { toast('مبلغ نامعتبر است.', true); return; }
+      try { await apiPut(`/users/${tgId}/credit-limit`, { amount }); toast('سقف اعتبار ثبت شد.'); close(); await showUserDetail(tgId); }
       catch (e) { handleErr(e); }
     });
     const msgBtn = $('#user-msg-submit', body);
@@ -3413,8 +3565,17 @@ async function renderCatalog() {
   body.innerHTML = `
     <div class="toolbar"><button class="btn btn-primary btn-sm" id="add-prod">+ محصول جدید</button></div>
     <div class="card"><div class="table-wrap"><table><thead><tr><th>نام</th><th>دسته</th><th>قیمت</th><th>موجودی</th><th>وضعیت</th><th>عملیات</th></tr></thead>
-    <tbody>${products.map(p => `<tr>
-      <td>${esc(p.name)}</td><td>${esc(p.category_name)}</td><td class="mono">${fmt(p.price)}</td>
+    <tbody>${products.map((p, i) => {
+      const sameCat = products.filter(x => x.category_id === p.category_id);
+      const posInCat = sameCat.findIndex(x => x.id === p.id);
+      return `<tr>
+      <td>
+        <div class="reorder-col">
+          <button class="btn btn-xs" data-prod-up="${p.id}" data-cat="${p.category_id}" ${posInCat === 0 ? 'disabled' : ''}>▲</button>
+          <button class="btn btn-xs" data-prod-down="${p.id}" data-cat="${p.category_id}" ${posInCat === sameCat.length - 1 ? 'disabled' : ''}>▼</button>
+        </div>
+        ${esc(p.name)}
+      </td><td>${esc(p.category_name)}</td><td class="mono">${fmt(p.price)}</td>
       <td class="mono">${p.is_auto_provision ? '<span class="chip">خودکار</span>' : fmt(p.stock)}</td>
       <td>${p.is_active ? '<span class="badge badge-approved">فعال</span>' : '<span class="badge badge-rejected">غیرفعال</span>'}</td>
       <td>
@@ -3424,7 +3585,8 @@ async function renderCatalog() {
         <button class="btn btn-sm" data-toggle-prod="${p.id}">${p.is_active ? 'غیرفعال' : 'فعال'}</button>
         <button class="btn btn-danger btn-sm" data-del-prod="${p.id}">حذف</button>
       </td>
-    </tr>`).join('') || '<tr><td colspan="6" class="empty-state">محصولی نیست</td></tr>'}</tbody></table></div></div>`;
+    </tr>`;
+    }).join('') || '<tr><td colspan="6" class="empty-state">محصولی نیست</td></tr>'}</tbody></table></div></div>`;
 
   $('#add-prod').addEventListener('click', () => openModal('محصول جدید', `
     <div class="form-grid">
@@ -3472,6 +3634,19 @@ async function renderCatalog() {
     const p = products.find(x => x.id === Number(b.dataset.payMethods));
     if (p) openProductPaymentMethodsModal(p);
   }));
+  async function moveProduct(productId, categoryId, dir) {
+    const ids = products.filter(x => x.category_id === categoryId).map(x => x.id);
+    const idx = ids.indexOf(productId);
+    const swapWith = idx + dir;
+    if (swapWith < 0 || swapWith >= ids.length) return;
+    [ids[idx], ids[swapWith]] = [ids[swapWith], ids[idx]];
+    try {
+      await apiPost('/products/reorder', { category_id: categoryId, product_ids: ids });
+      renderCatalog();
+    } catch (e) { handleErr(e); }
+  }
+  $$('[data-prod-up]', body).forEach(b => b.addEventListener('click', () => moveProduct(Number(b.dataset.prodUp), Number(b.dataset.cat), -1)));
+  $$('[data-prod-down]', body).forEach(b => b.addEventListener('click', () => moveProduct(Number(b.dataset.prodDown), Number(b.dataset.cat), 1)));
 }
 
 /* ---------------------------------------------------------- catalog: bento */
@@ -3737,8 +3912,12 @@ function renderCatalogBrutalist(categories, products, panelServers, paymentMetho
 /* -------------------------------------------------- warp --- */
 
 async function showConfigBank(productId) {
-  const res = await apiGet(`/products/${productId}/configs`);
+  const [res, usedRes] = await Promise.all([
+    apiGet(`/products/${productId}/configs`),
+    apiGet(`/products/${productId}/configs/used`),
+  ]);
   const configs = res.items || [];
+  const usedConfigs = usedRes.items || [];
   const usedCount = res.used_count || 0;
   openModal('بانک کانفیگ', `
     <div class="cfg-stats">
@@ -3758,6 +3937,14 @@ async function showConfigBank(productId) {
         <td class="cfg-actions"><button class="btn btn-ghost btn-sm" data-copy-cfg="${esc(c.link)}">کپی</button><button class="btn btn-danger btn-sm" data-del-cfg="${c.id}">حذف</button></td>
       </tr>`).join('') || `<tr><td colspan="2" class="empty-state"><div class="icon">${svg('empty')}</div>خالی است</td></tr>`}</tbody></table>
     </div>
+    <h4 class="cfg-list-title">تحویل‌شده / ناموجود (${usedConfigs.length})</h4>
+    <div class="table-wrap cfg-table-wrap">
+      <table><tbody>${usedConfigs.map(c => `<tr>
+        <td class="mono cfg-link-cell">${esc(c.link)}</td>
+        <td class="mono">${c.assigned_user_id ? esc(String(c.assigned_user_id)) : '-'}</td>
+        <td class="cfg-actions"><button class="btn btn-ghost btn-sm" data-copy-cfg="${esc(c.link)}">کپی</button><button class="btn btn-danger btn-sm" data-del-used-cfg="${c.id}">حذف</button></td>
+      </tr>`).join('') || `<tr><td colspan="3" class="empty-state"><div class="icon">${svg('empty')}</div>خالی است</td></tr>`}</tbody></table>
+    </div>
   `, (body, close) => {
     $('#add-links', body).addEventListener('click', async () => {
       const links = $('#new-links', body).value;
@@ -3774,6 +3961,10 @@ async function showConfigBank(productId) {
     $$('[data-del-cfg]', body).forEach(b => b.addEventListener('click', async () => {
       try { await apiDelete(`/configs/${b.dataset.delCfg}`); close(); showConfigBank(productId); } catch (e) { handleErr(e); }
     }));
+    $$('[data-del-used-cfg]', body).forEach(b => b.addEventListener('click', async () => {
+      if (!confirm('این کانفیگِ تحویل‌شده برای همیشه از بانک محصول حذف می‌شود و این عملیات غیرقابل بازگشت است. ادامه می‌دهید؟')) return;
+      try { await apiDelete(`/products/${productId}/configs/${b.dataset.delUsedCfg}/used`); close(); showConfigBank(productId); } catch (e) { handleErr(e); }
+    }));
   }, { wide: true });
 }
 
@@ -3784,6 +3975,7 @@ const TIER_NUM_FIELDS = [
   ['permanent_discount_percent', 'تخفیف دائمی٪ (سطح تخفیفی)'],
   ['min_qty', 'حداقل تعداد خرید (خرید عمده محصول)'],
   ['min_volume_gb', 'حداقل حجم خرید به گیگ (اعتبار حجمی)'],
+  ['credit_limit_toman', 'سقف اعتبار پس‌پرداخت به تومان (۰=بدون اعتبار)'],
 ];
 const TIER_FLAG_FIELDS = [
   ['has_miniapp', 'مینی‌اپ اختصاصی'], ['has_web_panel', 'پنل وب'],
@@ -3795,12 +3987,13 @@ function tierSummaryLine(t) {
   if (t.permanent_discount_percent !== null) parts.push(`تخفیف دائمی ${fmt(t.permanent_discount_percent)}٪`);
   if (t.min_qty !== null) parts.push(`حداقل ${fmt(t.min_qty)} عدد`);
   if (t.min_volume_gb !== null) parts.push(`حداقل ${fmt(t.min_volume_gb)} گیگ`);
+  if (t.credit_limit_toman) parts.push(`سقف اعتبار ${fmt(t.credit_limit_toman)} تومان`);
   [['has_miniapp', 'مینی‌اپ'], ['has_web_panel', 'پنل وب'], ['has_dedicated_bot', 'بات مستقل']].forEach(([k, l]) => { if (t[k]) parts.push(l); });
   return parts.join(' · ') || '—';
 }
 function openTierEditor(t, reload) {
   const isDiscount = t.model === 'discount';
-  const numFields = isDiscount ? TIER_NUM_FIELDS.filter(([k]) => k === 'permanent_discount_percent') : TIER_NUM_FIELDS;
+  const numFields = isDiscount ? TIER_NUM_FIELDS.filter(([k]) => k === 'permanent_discount_percent' || k === 'credit_limit_toman') : TIER_NUM_FIELDS;
   const flagFields = isDiscount ? TIER_FLAG_FIELDS.filter(([k]) => k === 'auto_approve') : TIER_FLAG_FIELDS;
   const nums = numFields.map(([k, label]) => `<label class="field"><span>${label}</span><input class="input" id="tier-${k}" type="number" min="0" value="${t[k] ?? ''}"></label>`).join('');
   const flags = flagFields.map(([k, label]) => `<label class="field"><span><input type="checkbox" id="tier-${k}" ${t[k] ? 'checked' : ''}> ${label}</span></label>`).join('');
@@ -4728,13 +4921,26 @@ function _swOn(root, key) { return $(`.switch[data-swkey="${key}"]`, root)?.data
 function _val(root, key) { return $(`[data-fkey="${key}"]`, root)?.value; }
 function _num(root, key) { return Number(_val(root, key)) || 0; }
 
+function _referralFraudFlagsRows(items) {
+  if (!items || !items.length) return '<div class="card-sub">هشدار بازی وجود ندارد.</div>';
+  return items.map(f => `
+    <div class="row-item" data-flag-id="${f.id}" style="border:1px solid var(--border,#333);border-radius:8px;padding:8px;margin-bottom:8px">
+      <div><b>${esc(f.username ? '@' + f.username : (f.first_name || ('کاربر ' + f.referrer_id)))}</b> (${f.referrer_id})</div>
+      <div class="card-sub">${esc(f.reason)}</div>
+      <div class="card-sub">دعوت‌ها: ${fmt(f.invited_total)} | بی‌خرید: ${fmt(f.zero_purchase_count)} | دعوت انبوه: ${fmt(f.burst_count)} | ${fmtDate(f.created_at)}</div>
+      <button class="btn btn-sm" data-resolve-flag="${f.id}" style="margin-top:6px">✅ رفع شد (بررسی دستی انجام شد)</button>
+    </div>
+  `).join('');
+}
+
 async function renderSalesSettings() {
-  const [referral, wheel, renewal, volumeReminder, connectAlert, earlyRenewal, testConfig, testPlans, panelServers, forceJoin, stockAlert, products] = await Promise.all([
+  const [referral, wheel, renewal, volumeReminder, connectAlert, earlyRenewal, testConfig, testPlans, panelServers, forceJoin, stockAlert, products, referralFraud, fraudFlags] = await Promise.all([
     apiGet('/settings/referral'), apiGet('/settings/wheel'),
     apiGet('/settings/renewal'), apiGet('/settings/volume-reminder'), apiGet('/settings/connect-alert'),
     apiGet('/settings/early-renewal-discount'), apiGet('/settings/test-config'),
     apiGet('/test-config/plans'), apiGet('/test-config/panel-servers-lite'),
     apiGet('/settings/force-join'), apiGet('/settings/stock-alert'), apiGet('/products'),
+    apiGet('/settings/referral-fraud'), apiGet('/referral-fraud/flags?resolved=false'),
   ]);
 
   const eligibleProducts = (products || []).filter(p => p.is_auto_provision && p.provision_server_id);
@@ -4866,6 +5072,21 @@ async function renderSalesSettings() {
       <label class="field"><span>آستانه (وقتی موجودی یک محصول به این عدد برسد، به ادمین‌ها اطلاع داده می‌شود)</span>
         <input class="input" data-fkey="stock_threshold" type="number" value="${stockAlert.threshold}"></label>
       <button class="btn btn-primary btn-sm" id="save-stock">ذخیره</button>
+    </div>
+
+    <div class="card">
+      <h3>🚨 هشدار زیرمجموعه‌گیری فیک</h3>
+      <div class="card-sub" style="margin-bottom:8px">چون تلگرام IP/دستگاه نمی‌دهد، تشخیص فقط بر اساس رفتار حساب‌هاست: دعوت انبوه در بازه‌ی کوتاه، یا نرخ بالای زیرمجموعه‌های بی‌خرید. با تشخیص مشکوک، به ادمین‌ها هشدار داده می‌شود.</div>
+      <label class="field field-row"><span>فعال</span>${_swSpan('rf_enabled', referralFraud.detection_enabled)}</label>
+      <label class="field"><span>تعداد دعوت که یعنی «انبوه»</span><input class="input" data-fkey="rf_burst_count" type="number" value="${referralFraud.burst_count}"></label>
+      <label class="field"><span>بازه‌ی زمانی دعوت انبوه (دقیقه)</span><input class="input" data-fkey="rf_burst_minutes" type="number" value="${referralFraud.burst_minutes}"></label>
+      <label class="field"><span>حداقل تعداد دعوت لازم برای بررسی نرخ بی‌خریدی</span><input class="input" data-fkey="rf_min_invites" type="number" value="${referralFraud.min_invites}"></label>
+      <label class="field"><span>درصد بی‌خریدی که یعنی مشکوک</span><input class="input" data-fkey="rf_zero_ratio" type="number" value="${referralFraud.zero_purchase_ratio}"></label>
+      <label class="field field-row"><span>توقف خودکار پاداش رفرال کاربر مشکوک تا بررسی دستی</span>${_swSpan('rf_auto_suspend', referralFraud.auto_suspend)}</label>
+      <button class="btn btn-primary btn-sm" id="save-referral-fraud" style="margin-top:12px">ذخیره</button>
+
+      <div class="card-sub" style="margin:16px 0 8px"><b>هشدارهای باز (${fraudFlags.items.length})</b></div>
+      <div id="referral-fraud-flags-list">${_referralFraudFlagsRows(fraudFlags.items)}</div>
     </div>
   `);
 
@@ -5048,6 +5269,31 @@ async function renderSalesSettings() {
       await apiPost('/settings/stock-alert', { threshold: _num(root, 'stock_threshold') });
       toast('آستانه‌ی هشدار موجودی ذخیره شد.');
     } catch (e) { handleErr(e); }
+  });
+
+  $('#save-referral-fraud').addEventListener('click', async () => {
+    try {
+      await apiPost('/settings/referral-fraud', {
+        detection_enabled: _swOn(root, 'rf_enabled'),
+        burst_count: _num(root, 'rf_burst_count'),
+        burst_minutes: _num(root, 'rf_burst_minutes'),
+        min_invites: _num(root, 'rf_min_invites'),
+        zero_purchase_ratio: _num(root, 'rf_zero_ratio'),
+        auto_suspend: _swOn(root, 'rf_auto_suspend'),
+      });
+      toast('تنظیمات هشدار زیرمجموعه‌گیری فیک ذخیره شد.');
+    } catch (e) { handleErr(e); }
+  });
+
+  $('#referral-fraud-flags-list').addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-resolve-flag]');
+    if (!btn) return;
+    const flagId = btn.dataset.resolveFlag;
+    try {
+      await apiPost(`/referral-fraud/flags/${flagId}/resolve`);
+      btn.closest('[data-flag-id]').remove();
+      toast('هشدار رفع شد.');
+    } catch (e2) { handleErr(e2); }
   });
 }
 
@@ -6099,6 +6345,22 @@ function panelHealthHtml(s) {
   return `<div${tip} style="font-size:11px;margin-top:4px;color:${down ? '#FB7185' : '#34D399'}">${down ? '🔴 قطع' : '🟢 آنلاین'}${when ? ' · آخرین بررسی ' + when : ''}</div>`;
 }
 
+function wirePanelReorder(servers) {
+  $$(`[data-move-up], [data-move-down]`, content()).forEach(b => b.addEventListener('click', async () => {
+    const id = Number(b.dataset.moveUp || b.dataset.moveDown);
+    const idx = servers.findIndex(s => s.id === id);
+    if (idx < 0) return;
+    const target = b.dataset.moveUp ? idx - 1 : idx + 1;
+    if (target < 0 || target >= servers.length) return;
+    const ids = servers.map(s => s.id);
+    [ids[idx], ids[target]] = [ids[target], ids[idx]];
+    b.disabled = true;
+    try { await apiPost('/panel-servers/reorder', { server_ids: ids }); toast('ترتیب سرورها ذخیره شد.'); renderPanels(); }
+    catch (e) { handleErr(e); }
+    finally { b.disabled = false; }
+  }));
+}
+
 async function renderPanels() {
   const servers = await apiGet('/panel-servers');
   if (loadTheme().theme === 'brutalist') return renderPanelsBrutalist(servers);
@@ -6119,7 +6381,11 @@ async function renderPanels() {
           <label style="display:flex;gap:4px;align-items:center;font-size:12px"><input type="checkbox" data-usage="test" data-usage-id="${s.id}" ${s.used_for_test_config ? 'checked' : ''}> کانفیگ تست</label>
         </td>
         <td style="white-space:nowrap">
-          <button class="btn btn-sm" data-test="${s.id}">تست اتصال</button>
+          <button class="btn btn-sm" data-move-up="${s.id}" title="یک پله بالا">↑</button>
+          <button class="btn btn-sm" data-move-down="${s.id}" title="یک پله پایین">↓</button>
+          <button class="btn btn-sm" data-move-up="${s.id}">↑</button>
+            <button class="btn btn-sm" data-move-down="${s.id}">↓</button>
+            <button class="btn btn-sm" data-test="${s.id}">تست اتصال</button>
           <button class="btn btn-sm" data-edit="${s.id}">ویرایش</button>
           ${PANEL_INBOUND_SELECT_TYPES.includes(s.panel_type) ? `<button class="btn btn-sm" data-edit-inbounds="${s.id}">Inbound ها</button>` : ''}
           ${PANEL_TEMPLATE_BASED_TYPES.includes(s.panel_type) ? `<button class="btn btn-sm" data-retemplate="${s.id}">قالب جدید</button>` : ''}
@@ -6155,6 +6421,7 @@ async function renderPanels() {
   }));
   $$('[data-edit]', content()).forEach(b => b.addEventListener('click', () => openPanelEditModal(servers.find(s => s.id === Number(b.dataset.edit)))));
   $$('[data-retemplate]', content()).forEach(b => b.addEventListener('click', () => openPanelRetemplateModal(Number(b.dataset.retemplate))));
+  wirePanelReorder(servers);
   wirePanelDeleteButtons();
 }
 
@@ -6223,6 +6490,8 @@ function renderPanelsBento(servers) {
           <div class="bn-row-sub mono" style="direction:ltr;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.api_url)}</div>
           ${panelHealthHtml(s)}
           <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+            <button class="bn-btn bn-btn-ghost" data-move-up="${s.id}">↑</button>
+            <button class="bn-btn bn-btn-ghost" data-move-down="${s.id}">↓</button>
             <button class="bn-btn bn-btn-ghost" data-test="${s.id}">تست اتصال</button>
             <button class="bn-btn bn-btn-ghost" data-edit="${s.id}">ویرایش</button>
             ${PANEL_INBOUND_SELECT_TYPES.includes(s.panel_type) ? `<button class="bn-btn bn-btn-ghost" data-edit-inbounds="${s.id}">Inbound ها</button>` : ''}
@@ -6253,6 +6522,7 @@ function renderPanelsBento(servers) {
     finally { b.textContent = 'Inbound ها'; b.disabled = false; }
   }));
   $$('[data-retemplate]', content()).forEach(b => b.addEventListener('click', () => openPanelRetemplateModal(Number(b.dataset.retemplate))));
+  wirePanelReorder(servers);
   wirePanelDeleteButtons();
 }
 
@@ -6320,6 +6590,7 @@ function renderPanelsBrutalist(servers) {
     finally { b.textContent = 'Inbound ها'; b.disabled = false; }
   }));
   $$('[data-retemplate]', content()).forEach(b => b.addEventListener('click', () => openPanelRetemplateModal(Number(b.dataset.retemplate))));
+  wirePanelReorder(servers);
   wirePanelDeleteButtons();
 }
 
@@ -6437,6 +6708,9 @@ const SETTINGS_GROUPS = [
   { tab: 'services', title: '🛒 سقف تعداد خرید در هر سفارش', fields: [
     { key: 'auto_provision_max_qty', label: 'حداکثر تعداد محصولات خودکار در هر سفارش (۰=نامحدود)', type: 'number' },
   ] },
+  { tab: 'services', title: '🧹 پاکسازی سرویس‌ها', fields: [
+    { key: 'inactive_config_delete_time', label: 'ساعت حذف خودکار کانفیگ‌های غیرفعال (HH:MM به وقت تهران؛ خالی = خاموش)', type: 'text' },
+  ]},
   { tab: 'services', title: '📊 گزارش روزانه‌ی فروش', fields: [
     { key: 'daily_report_enabled', label: 'ارسال گزارش روزانه‌ی فروش به مدیران', type: 'bool' },
     { key: 'daily_report_time', label: 'ساعت ارسال به وقت تهران (مثل 23:45)', type: 'text' },
@@ -6469,6 +6743,7 @@ const SETTINGS_GROUPS = [
     { key: 'svc_show_update_config', label: 'دکمه «بروزرسانی کانفیگ»', type: 'bool' },
     { key: 'svc_show_qr', label: 'دکمه «کیوآر کانفیگ»', type: 'bool' },
     { key: 'svc_show_delete', label: 'دکمه «حذف کامل سرویس»', type: 'bool' },
+    { key: 'svc_refund_window_hours', label: 'مهلت بازگشت وجه هنگام حذف سرویس (ساعت پس از خرید؛ ۰ = غیرفعال)', type: 'number' },
     { key: 'svc_show_toggle', label: 'دکمه «فعال/غیرفعال کردن کانفیگ»', type: 'bool' },
     { key: 'svc_show_rename', label: 'دکمه «تغییر نام کانفیگ»', type: 'bool' },
     { key: 'svc_show_auto_renew', label: 'دکمه «تمدید خودکار»', type: 'bool' },
@@ -7153,6 +7428,82 @@ async function renderButtons() {
   setContent(html);
   BTN_GROUPS.forEach(g => wireButtonGroupList(g.key));
   $$('[data-save-group]', content()).forEach(b => b.addEventListener('click', () => saveButtonGroup(b.dataset.saveGroup)));
+}
+
+/* ========================================================= bot texts === */
+// قابلیت ۵۰: تب مستقل «متن‌های ربات». برخلاف تب «دکمه‌ها»، لیست این تب
+// خودکار از سرور می‌آید (GET /api/texts) و با اضافه‌شدن db.get_text(...)ی
+// جدید به کد بات، همان لحظه‌ی بالا آمدن بعدیِ بات، ردیف تازه‌ای این‌جا ظاهر
+// می‌شود - بدون نیاز به تغییر این فایل.
+let BOT_TEXTS_ALL = [];
+
+function botTextItemHtml(it) {
+  return `
+    <div class="card" style="margin-bottom:12px" data-bt-key="${esc(it.key)}">
+      <div class="card-head">
+        <h3 style="font-size:13px;font-weight:500">${esc(it.category)} <span style="color:var(--muted,#9ca3af)">/ ${esc(it.key)}</span></h3>
+        ${it.overridden ? '<span class="badge">ویرایش‌شده</span>' : ''}
+      </div>
+      <textarea class="input bt-textarea" rows="3" style="width:100%;resize:vertical">${esc(it.current_text)}</textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary btn-sm bt-save">ذخیره</button>
+        ${it.overridden ? '<button class="btn btn-sm bt-reset">بازگردانی به پیش‌فرض</button>' : ''}
+      </div>
+    </div>`;
+}
+
+function renderBotTextList(items) {
+  const root = content();
+  $('#bt-list', root).innerHTML = items.length
+    ? items.map(botTextItemHtml).join('')
+    : '<div class="empty-state">چیزی پیدا نشد.</div>';
+  $$('.bt-save', root).forEach(b => b.addEventListener('click', e => saveBotText(e.target.closest('[data-bt-key]'))));
+  $$('.bt-reset', root).forEach(b => b.addEventListener('click', e => resetBotText(e.target.closest('[data-bt-key]'))));
+}
+
+async function saveBotText(card) {
+  const key = card.dataset.btKey;
+  const value = $('.bt-textarea', card).value;
+  const btn = $('.bt-save', card);
+  btn.disabled = true;
+  const prevTxt = btn.textContent; btn.textContent = 'در حال ذخیره...';
+  try {
+    await apiPost('/texts', { key, value });
+    const item = BOT_TEXTS_ALL.find(i => i.key === key);
+    if (item) { item.current_text = value; item.overridden = true; }
+    renderBotTextList(BOT_TEXTS_ALL);
+    toast('ذخیره شد.');
+  } catch (e) { handleErr(e); } finally { btn.disabled = false; btn.textContent = prevTxt; }
+}
+
+async function resetBotText(card) {
+  const key = card.dataset.btKey;
+  try {
+    await apiPost('/texts/reset', { key });
+    const item = BOT_TEXTS_ALL.find(i => i.key === key);
+    if (item) { item.current_text = item.default_text; item.overridden = false; }
+    renderBotTextList(BOT_TEXTS_ALL);
+    toast('به پیش‌فرض بازگشت.');
+  } catch (e) { handleErr(e); }
+}
+
+async function renderBotTexts() {
+  const res = await apiGet('/texts');
+  BOT_TEXTS_ALL = res.items || [];
+  const html = `
+    <div class="card" style="margin-bottom:18px">
+      <span class="card-sub">همه‌ی متن‌های ربات (پیام‌های کاربر و پیام‌های ادمین داخل ربات) این‌جا لیست شده‌اند. با اضافه‌شدن قابلیت‌های جدید به ربات، متن‌های تازه خودکار به همین لیست اضافه می‌شوند.</span>
+      <input class="input" id="bt-search" placeholder="جستجو در کلید/دسته/متن..." style="margin-top:10px">
+    </div>
+    <div id="bt-list"></div>`;
+  setContent(html);
+  renderBotTextList(BOT_TEXTS_ALL);
+  $('#bt-search', content()).addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    const filtered = !q ? BOT_TEXTS_ALL : BOT_TEXTS_ALL.filter(it =>
+      it.key.toLowerCase().includes(q) || it.category.toLowerCase().includes(q) || it.current_text.toLowerCase().includes(q));
+    renderBotTextList(filtered);
+  });
 }
 
 /* ============================================================ gateways === */
@@ -7970,7 +8321,7 @@ const ACTION_LABEL = {
   discount_delete: 'حذف کد تخفیف', discount_toggle: 'فعال/غیرفعال کردن کد تخفیف',
   exchange_rate_refresh: 'بروزرسانی نرخ ارز', menu_order_change: 'تغییر ترتیب منو',
   main_menu_display_change: 'تغییر نمایش منوی اصلی',
-  order_approve: 'تایید سفارش', order_reject: 'رد سفارش', orphan_db_file_delete: 'حذف فایل بلااستفاده',
+  order_approve: 'تایید سفارش', order_reject: 'رد سفارش', order_fake_receipt: 'فیش فیک + بلاک کاربر', orphan_db_file_delete: 'حذف فایل بلااستفاده',
   panel_add: 'افزودن پنل VPN', panel_delete: 'حذف پنل VPN', panel_server_add: 'افزودن سرور پنل',
   panel_server_delete: 'حذف سرور پنل', panel_server_template_update: 'ویرایش قالب سرور پنل',
   panel_server_usage_toggle: 'فعال/غیرفعال کردن مصرف سرور', plisio_key_change: 'تغییر کلید Plisio',
@@ -7981,7 +8332,7 @@ const ACTION_LABEL = {
   pricing_tier_add: 'افزودن رده قیمتی', pricing_tier_delete: 'حذف رده قیمتی', product_add: 'افزودن محصول',
   product_delete: 'حذف محصول', product_edit: 'ویرایش محصول', product_price_edit: 'ویرایش قیمت محصول',
   product_server_edit: 'تغییر پنل/اینباند محصول', product_volume_edit: 'تغییر حجم محصول',
-  product_toggle: 'فعال/غیرفعال کردن محصول', reseller_credit_adjust: 'تغییر اعتبار نماینده',
+  product_toggle: 'فعال/غیرفعال کردن محصول', reseller_credit_adjust: 'تغییر اعتبار نماینده', reseller_credit_limit: 'تغییر سقف اعتبار پس‌پرداخت', order_survey_send: 'ارسال نظرسنجی سفارش',
   reseller_credit_toggle: 'فعال/غیرفعال کردن اعتبار نماینده', reseller_orphan_purge: 'پاکسازی نمایندگان بلااستفاده',
   reseller_panel_set: 'تنظیم پنل نماینده', reseller_request_admin_cancel: 'لغو درخواست نمایندگی',
   reseller_request_payment_approve: 'تایید پرداخت نمایندگی', reseller_request_quote: 'ثبت مبلغ درخواست نمایندگی',
