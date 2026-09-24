@@ -16,6 +16,7 @@
 """
 
 import asyncio
+import os
 from datetime import datetime
 from io import BytesIO
 
@@ -23,12 +24,106 @@ import qrcode
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
 
+import config
 from jalali import to_jalali_str
 from sub_info import fetch_individual_links
 
+# -----------------------------------------------------------------------
+# تصویر پس‌زمینه‌ی سفارشی برای کد QR کانفیگ (فعلاً فقط از داخل خودِ بات اصلی
+# قابل تنظیم است - در handlers_admin.py، بخش «تنظیمات ارسال کانفیگ»).
+# خودِ کد QR همیشه روی یک کادر کاملاً سفید قرار می‌گیرد تا قابل‌اسکن بودنش
+# تضمین شود؛ تصویر انتخابی ادمین فقط به‌عنوان تزئین دور این کادر استفاده
+# می‌شود. چون این تابع‌ها بدون وابستگی به aiogram نوشته شده‌اند، پنل وب
+# مستقل (admin_panel/config_delivery_web.py) هم می‌تواند از همین منطق
+# (و همین پس‌زمینه‌ی مشترکِ ذخیره‌شده در settings) استفاده کند.
+QR_BACKGROUND_PATH = os.path.join(config.BASE_DIR, "qr_background.png")
+QR_BACKGROUND_SETTING_KEY = "qr_background_enabled"
 
-def build_qr_bytes(link: str) -> bytes:
-    """ساخت بایت‌های تصویر PNG کد QR از روی لینک اشتراک (بدون وابستگی به aiogram)."""
+QR_CANVAS_SIZE = 1000       # اندازه‌ی نهایی تصویر مربعی خروجی (پیکسل)
+QR_PANEL_RATIO = 0.62       # نسبت عرض کادر سفید حامل QR به کل تصویر
+QR_PANEL_PADDING_RATIO = 0.09  # حاشیه‌ی سفید داخل کادر، دور خودِ QR
+QR_PANEL_RADIUS_RATIO = 0.06   # شعاع گردی گوشه‌های کادر سفید
+
+
+def has_qr_background() -> bool:
+    """آیا ادمین تا الان تصویر پس‌زمینه‌ای برای QR آپلود کرده؟"""
+    return os.path.isfile(QR_BACKGROUND_PATH)
+
+
+def qr_background_enabled(db) -> bool:
+    """آیا استفاده از پس‌زمینه فعال است؟ (هم باید فایلی آپلود شده باشد، هم سوییچ روشن باشد)."""
+    if db is None or not has_qr_background():
+        return False
+    return db.get_setting(QR_BACKGROUND_SETTING_KEY, "1") != "0"
+
+
+def save_qr_background(source_path: str) -> None:
+    """تصویر آپلودشده توسط ادمین (هر فرمتی) را می‌خواند، به RGB تبدیل و به‌صورت
+    یک PNG ثابت ذخیره می‌کند تا همیشه یک مسیر واحد و قابل‌پیش‌بینی داشته باشیم."""
+    from PIL import Image
+    with Image.open(source_path) as img:
+        img = img.convert("RGB")
+        img.save(QR_BACKGROUND_PATH, format="PNG")
+
+
+def remove_qr_background() -> bool:
+    """حذف تصویر پس‌زمینه‌ی فعلی (اگر وجود داشته باشد)."""
+    if has_qr_background():
+        os.remove(QR_BACKGROUND_PATH)
+        return True
+    return False
+
+
+def _compose_qr_with_background(qr_img) -> "Image.Image":
+    """کد QR (تصویر PIL سیاه/سفید ساخته‌شده توسط کتابخانه‌ی qrcode) را روی یک
+    کادر کاملاً سفید در مرکز تصویر پس‌زمینه‌ی ادمین می‌چسباند. خودِ پیکسل‌های
+    QR هیچ‌وقت روی پس‌زمینه قرار نمی‌گیرند - فقط دور کادر سفید تزئین می‌شود -
+    تا اسکن‌پذیری کد در هر شرایطی (هر عکسی که ادمین انتخاب کند) تضمین بماند."""
+    from PIL import Image, ImageDraw
+
+    with Image.open(QR_BACKGROUND_PATH) as bg_raw:
+        bg = bg_raw.convert("RGB")
+        # برش مرکزی به مربع، سپس تغییر اندازه به بومِ نهایی
+        w, h = bg.size
+        side = min(w, h)
+        left = (w - side) // 2
+        top = (h - side) // 2
+        bg = bg.crop((left, top, left + side, top + side))
+        bg = bg.resize((QR_CANVAS_SIZE, QR_CANVAS_SIZE), Image.LANCZOS)
+
+    canvas = bg.convert("RGBA")
+
+    # کادر سفید گردشده در مرکز، با سوپرسمپل برای لبه‌های صاف
+    panel_size = int(QR_CANVAS_SIZE * QR_PANEL_RATIO)
+    radius = int(panel_size * QR_PANEL_RADIUS_RATIO)
+    scale = 4
+    mask_big = Image.new("L", (panel_size * scale, panel_size * scale), 0)
+    ImageDraw.Draw(mask_big).rounded_rectangle(
+        (0, 0, panel_size * scale - 1, panel_size * scale - 1),
+        radius=radius * scale,
+        fill=255,
+    )
+    mask = mask_big.resize((panel_size, panel_size), Image.LANCZOS)
+
+    panel = Image.new("RGBA", (panel_size, panel_size), (255, 255, 255, 255))
+    panel_pos = ((QR_CANVAS_SIZE - panel_size) // 2, (QR_CANVAS_SIZE - panel_size) // 2)
+    canvas.paste(panel, panel_pos, mask)
+
+    # خودِ QR، با حاشیه‌ی سفید داخل کادر، دقیقاً وسط کادر
+    padding = int(panel_size * QR_PANEL_PADDING_RATIO)
+    qr_target = panel_size - 2 * padding
+    qr_img = qr_img.convert("RGB").resize((qr_target, qr_target), Image.NEAREST)
+    qr_pos = (panel_pos[0] + padding, panel_pos[1] + padding)
+    canvas.paste(qr_img, qr_pos)
+
+    return canvas.convert("RGB")
+
+
+def build_qr_bytes(link: str, db=None) -> bytes:
+    """ساخت بایت‌های تصویر PNG کد QR از روی لینک اشتراک (بدون وابستگی به aiogram).
+    اگر ادمین پس‌زمینه‌ای برای QR تنظیم و فعال کرده باشد (db داده شده و
+    qr_background_enabled(db) درست باشد)، همان تصویر دور کد QR چیده می‌شود؛
+    در غیر این صورت همان کد QR ساده‌ی سیاه/سفید قبلی برگردانده می‌شود."""
     qr = qrcode.QRCode(
         version=None,
         error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -40,14 +135,22 @@ def build_qr_bytes(link: str) -> bytes:
     img = qr.make_image(fill_color="black", back_color="white")
 
     buffer = BytesIO()
-    img.save(buffer, format="PNG")
+    if qr_background_enabled(db):
+        try:
+            final_img = _compose_qr_with_background(img)
+            final_img.save(buffer, format="PNG")
+        except Exception:
+            buffer = BytesIO()
+            img.save(buffer, format="PNG")
+    else:
+        img.save(buffer, format="PNG")
     buffer.seek(0)
     return buffer.read()
 
 
-def _build_qr_photo(link: str, filename: str = "config_qr.png") -> BufferedInputFile:
+def _build_qr_photo(link: str, filename: str = "config_qr.png", db=None) -> BufferedInputFile:
     """نگاشت بایت‌های QR به فرمت قابل ارسال aiogram."""
-    return BufferedInputFile(build_qr_bytes(link), filename=filename)
+    return BufferedInputFile(build_qr_bytes(link, db=db), filename=filename)
 
 
 def build_delivery_caption(
@@ -56,6 +159,7 @@ def build_delivery_caption(
     total: int,
     order_id: int = None,
     jalali_ready_date: str = None,
+    category_name: str = None,
 ) -> str:
     """متن کامل کپشن تحویل کانفیگ (مشخصات سفارش + راهنمای اتصال + پیام تشکر)."""
     if jalali_ready_date is None:
@@ -66,7 +170,9 @@ def build_delivery_caption(
     caption += "🧾 مشخصات سفارش\n"
     if order_id:
         caption += f"┣ 🆔 شماره سفارش: #{order_id}\n"
-    caption += f"┣ 📦 محصول: {product_name}\n"
+    if category_name:
+        caption += f"┣ 📂 دسته: {category_name}\n"
+    caption += f"┣ 📦 پلن: {product_name}\n"
     if total > 1:
         caption += f"┣ 🔢 کانفیگ {idx} از {total}\n"
     caption += f"┗ 📅 تاریخ تحویل: {jalali_ready_date}\n\n"
@@ -131,6 +237,14 @@ def _delivery_flags(db) -> tuple:
     return sub_link_on, individual_on
 
 
+def get_post_delivery_text(db) -> str:
+    """متن دلخواه ادمین که بعد از تحویل کامل کانفیگ (و خلاصه‌ی مبلغ) برای کاربر
+    ارسال می‌شود؛ اگر db داده نشود یا چیزی تنظیم نشده باشد، رشته‌ی خالی برمی‌گردد."""
+    if db is None:
+        return ""
+    return (db.get_setting("post_delivery_custom_text", "") or "").strip()
+
+
 async def deliver_config_to_user(
     bot: Bot,
     user_tg_id: int,
@@ -158,11 +272,30 @@ async def deliver_config_to_user(
     total = len(links)
     sub_link_on, individual_on = _delivery_flags(db)
 
+    # برای خرید پلن آماده، دسته‌بندی را مستقیماً از سفارش می‌خوانیم تا همه‌ی
+    # مسیرهای پرداخت (درگاه‌ها، کارت‌به‌کارت و پرداخت کیف پول) خروجی یکسانی داشته
+    # باشند. برای کانفیگ شخصی، دسته‌بندی وجود ندارد و همان خروجی قبلی حفظ می‌شود.
+    category_name = None
+    if db is not None and order_id:
+        try:
+            order = db.get_order(order_id)
+            if order and not order["is_custom_config"] and order["product_id"]:
+                product = db.get_product(order["product_id"])
+                if product and product["category_id"]:
+                    category = db.get_category(product["category_id"])
+                    if category:
+                        category_name = category["name"]
+        except Exception:
+            # اطلاعات تکمیلی نباید جلوی تحویل موفق کانفیگ را بگیرد.
+            category_name = None
+
     for idx, link in enumerate(links, start=1):
-        caption = build_delivery_caption(product_name, idx, total, order_id)
+        caption = build_delivery_caption(
+            product_name, idx, total, order_id, category_name=category_name
+        )
 
         try:
-            qr_photo = _build_qr_photo(link)
+            qr_photo = _build_qr_photo(link, db=db)
             await bot.send_photo(user_tg_id, qr_photo, caption=caption)
         except Exception:
             # اگر ساخت/ارسال QR به هر دلیلی ناموفق بود، حداقل متن اطلاعات برای کاربر ارسال شود
@@ -192,3 +325,20 @@ async def deliver_config_to_user(
 
     if final_price is not None:
         await bot.send_message(user_tg_id, build_summary_text(final_price, total))
+
+    post_text = get_post_delivery_text(db)
+    if post_text:
+        try:
+            await bot.send_message(user_tg_id, post_text)
+        except Exception:
+            pass
+
+    if db is not None:
+        try:
+            import tutorial
+            await tutorial.send_device_picker(
+                bot, user_tg_id, db,
+                intro="📚 برای اتصال بدون مشکل، دستگاه خودت رو انتخاب کن تا آموزش قدم‌به‌قدم رو برات بفرستم:",
+            )
+        except Exception:
+            pass

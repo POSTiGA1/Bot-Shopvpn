@@ -72,8 +72,14 @@ def _net_params_from_stream(stream: dict, host: str) -> dict:
 
     sni = ws_host or host
     reality = {}
+    tls_fingerprint = "chrome"
     if security == "tls":
-        sni = (stream.get("tlsSettings") or {}).get("serverName") or sni
+        tls_settings = stream.get("tlsSettings") or {}
+        sni = tls_settings.get("serverName") or sni
+        # Fingerprint is a client-side uTLS setting. Some panel/export formats
+        # persist it under tlsSettings; when it is absent, chrome is the
+        # compatible default used by Xray clients.
+        tls_fingerprint = tls_settings.get("fingerprint") or "chrome"
     elif security == "reality":
         rs = stream.get("realitySettings") or {}
         sni = rs.get("serverName") or sni
@@ -83,7 +89,8 @@ def _net_params_from_stream(stream: dict, host: str) -> dict:
         }
     return {
         "security": security, "network": network, "sni": sni,
-        "ws_path": ws_path, "ws_host": ws_host, "header_type": header_type, "reality": reality,
+        "ws_path": ws_path, "ws_host": ws_host, "header_type": header_type,
+        "tls_fingerprint": tls_fingerprint, "reality": reality,
     }
 
 
@@ -106,6 +113,10 @@ def _vless_or_trojan_uri(scheme: str, host, port, auth, remark, net: dict) -> st
         params["encryption"] = "none"
     if net["security"] in ("tls", "reality"):
         params["sni"] = net["sni"]
+        # Xray uTLS fingerprint applies to the client side of TLS too. Keep it
+        # in the exported URI for VLESS/Trojan TLS configs, not only Reality.
+        if net["security"] == "tls":
+            params["fp"] = net.get("tls_fingerprint") or "chrome"
     if net["network"] in ("ws", "httpupgrade", "h2"):
         params["host"] = net["ws_host"]
         params["path"] = net["ws_path"]

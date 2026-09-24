@@ -37,6 +37,16 @@ def parse_report_time(value: str) -> tuple:
     return DEFAULT_TIME
 
 
+def _fmt_change_pct(pct) -> str:
+    if pct is None:
+        return "🆕 دیروز فروشی نبود"
+    if pct > 0:
+        return f"📈 +{pct}٪"
+    if pct < 0:
+        return f"📉 {pct}٪"
+    return "➖ ۰٪"
+
+
 def build_report_text(db, now_tehran: datetime) -> str:
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     stats = db.get_sales_stats(day, day)
@@ -49,11 +59,16 @@ def build_report_text(db, now_tehran: datetime) -> str:
         f"🛒 سفارش تاییدشده: {stats['approved']:,}",
         f"💰 درآمد: {stats['revenue']:,} تومان",
         f"🧾 میانگین سبد خرید: {stats['aov']:,} تومان",
+        f"{_fmt_change_pct(stats['revenue_change_pct'])} نسبت به دیروز ({stats['prev_revenue']:,} تومان)",
         f"⏳ در انتظار: {stats['pending']:,} | ❌ ردشده: {stats['rejected']:,}",
         f"💳 شارژ کیف پول: {extras['topup_count']:,} مورد، {extras['topup_amount']:,} تومان",
         f"🧪 کانفیگ تست: {extras['test_count']:,}",
         f"👥 کاربر جدید: {stats['new_users']:,}",
+        f"🎯 اولین خرید: {extras['first_purchase_count']:,} کاربر",
+        f"🟢 کاربران فعال: {extras['active_users_count']:,} | ⚪️ غیرفعال: {extras['inactive_users_count']:,}",
     ]
+    if extras["best_hour"] is not None:
+        lines.append(f"🕐 پرفروش‌ترین ساعت امروز: {extras['best_hour']:02d}:00 تا {extras['best_hour']+1:02d}:00 ({extras['best_hour_orders']:,} سفارش)")
     top = stats.get("top_products") or []
     if top:
         lines += ["", "🏆 پرفروش‌ترین‌ها:"]

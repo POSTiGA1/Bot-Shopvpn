@@ -72,12 +72,7 @@ def blupal_payment_available(db) -> bool:
     )
 
 
-def toman_to_rial(amount_toman: int) -> int:
-    return int(amount_toman) * 10
-
-
-def rial_to_toman(amount_rial: int) -> int:
-    return int(amount_rial) // 10
+from payment_base import toman_to_rial, rial_to_toman  # noqa: F401
 
 
 def webhook_url_hint(tenant_id: str) -> str:
@@ -170,115 +165,8 @@ async def try_verify_and_finalize(db, invoice_row) -> str:
     return "verified_now"
 
 
-async def finalize_paid_order(db, bot, order_id: int, notify_admins_fn=None) -> str:
-    """پس از تأیید پرداخت بلوپال برای یک سفارش (کانفیگ شخصی یا خرید از کاتالوگ)،
-    کانفیگ را می‌سازد/برمی‌دارد، سفارش را تایید و به کاربر تحویل می‌دهد.
-    notify_admins_fn (اختیاری) یک async callable(bot, order_id) برای اطلاع‌رسانی به ادمین‌هاست.
-    خروجی متن کوتاهی برای نمایش است."""
-    order = db.get_order(order_id)
-    if not order:
-        return "⚠️ سفارش یافت نشد."
-    if order["status"] != "pending":
-        return "✅ این سفارش قبلاً بررسی و تحویل داده شده است."
-    if not db.claim_order(order_id):
-        return "✅ این سفارش قبلاً بررسی و تحویل داده شده است."
+from payment_delivery import finalize_paid_order, finalize_paid_topup  # noqa: F401
 
-    if order["is_renewal"]:
-        try:
-            result_text = await execute_renewal(db, order)
-        except RenewalError as e:
-            db.release_order_claim(order_id)
-            return f"⛔️ تمدید ناموفق بود: {e}\nبا پشتیبانی تماس بگیرید."
-        except Exception:
-            logger.exception("خطای غیرمنتظره در execute_renewal برای سفارش تمدید #%s (بلوپال)", order_id)
-            db.release_order_claim(order_id)
-            return "⛔️ خطای غیرمنتظره‌ای در تمدید رخ داد. سفارش برای بررسی دوباره آزاد شد؛ با پشتیبانی تماس بگیرید."
-        db.approve_renewal_order(order_id)
-        try:
-            await bot.send_message(order["user_id"], result_text)
-        except Exception:
-            pass
-        if notify_admins_fn:
-            try:
-                await notify_admins_fn(bot, order_id)
-            except Exception:
-                pass
-        return result_text
-
-    if order["is_custom_config"]:
-        server = db.get_panel_server(order["custom_panel_server_id"])
-        if not server:
-            db.release_order_claim(order_id)
-            return "⛔️ سرور مربوط به کانفیگ شخصی یافت نشد؛ با پشتیبانی تماس بگیرید."
-        duration_days = db.get_custom_config_settings()["duration_days"]
-        try:
-            provider = get_provider(server)
-            result = await provider.create_user(order["custom_username"], order["custom_volume_gb"], duration_days)
-        except Exception as e:
-            db.release_order_claim(order_id)
-            return f"⛔️ خطا در ساخت کانفیگ روی پنل: {e}\nبا پشتیبانی تماس بگیرید."
-        db.add_custom_config(
-            order["user_id"], server["id"], result.username, order["custom_volume_gb"],
-            duration_days, result.subscription_url, order_id=order_id,
-        )
-        db.approve_custom_config_order(order_id)
-        await deliver_config_to_user(
-            bot, order["user_id"], "کانفیگ شخصی",
-            [result.subscription_url], final_price=order["final_price"], order_id=order_id, db=db,
-        )
-    else:
-        product = db.get_product(order["product_id"])
-        quantity = order["quantity"] or 1
-        if product and product["is_auto_provision"]:
-            try:
-                if product["provision_server_id"]:
-                    prov_results = await provision_direct(db, product, quantity, user_id=order["user_id"], order_id=order_id)
-                else:
-                    prov_results = await provision_auto_config(db, product, quantity, user_id=order["user_id"], order_id=order_id)
-            except (ProvisionError, DirectProvisionError) as e:
-                db.release_order_claim(order_id)
-                return f"⚠️ پرداخت تایید شد ولی ساخت خودکار کانفیگ ناموفق بود: {e}\nبا پشتیبانی تماس بگیرید."
-            db.approve_order_auto(order_id)
-            links = [r["subscription_url"] for r in prov_results]
-        else:
-            results = db.take_unused_configs(order["product_id"], order["user_id"], quantity)
-            if not results:
-                db.release_order_claim(order_id)
-                return "⚠️ پرداخت تایید شد ولی موجودی هم‌زمان تمام شده؛ ادمین به‌زودی دستی رسیدگی می‌کند."
-            db.approve_order(order_id, [r["id"] for r in results])
-            links = [r["link"] for r in results]
-            await check_and_notify_low_stock(bot.send_message, db, order["product_id"], bot_token=bot.token)
-        await deliver_config_to_user(
-            bot, order["user_id"], product["name"] if product else "",
-            links, final_price=order["final_price"], order_id=order_id, db=db,
-        )
-
-    reward_info = db.reward_referrer_if_first_purchase(order["user_id"], order["base_price"])
-    if reward_info:
-        reward_amount, referrer_id = reward_info
-        try:
-            await bot.send_message(
-                referrer_id,
-                f"🤝 تبریک! یکی از زیرمجموعه‌های شما اولین خرید خود را انجام داد.\n"
-                f"💰 {reward_amount:,} تومان به کیف پول شما اضافه شد.",
-            )
-        except Exception:
-            pass
-    if notify_admins_fn:
-        try:
-            await notify_admins_fn(bot, order_id)
-        except Exception:
-            pass
-    return "✅ پرداخت تایید شد و کانفیگ تحویل داده شد."
-
-
-async def finalize_paid_topup(db, topup_id: int) -> str:
-    topup = db.get_topup(topup_id)
-    if not topup:
-        return "⚠️ درخواست شارژ یافت نشد."
-    if not db.approve_topup(topup_id):
-        return "✅ این درخواست شارژ قبلاً بررسی شده است."
-    return f"✅ پرداخت تایید شد و {topup['amount']:,} تومان به کیف پول کاربر اضافه شد."
 
 
 def extract_invoice_id_from_webhook(body: dict) -> str:

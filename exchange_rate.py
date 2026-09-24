@@ -273,43 +273,50 @@ async def get_usd_to_toman_rate(manual_fallback: Optional[float] = None) -> floa
         return _cache["rate"]
 
     errors = []
-    async with aiohttp.ClientSession(connector=_make_connector()) as session:
-        for name, provider in _PROVIDERS:
-            last_err = None
-            for attempt in range(1, RETRY_COUNT + 1):
-                try:
-                    toman = await provider(session)
-                    if toman <= 0:
-                        raise ValueError("نرخ دریافتی نامعتبر است (<= 0).")
-                    _cache["rate"] = toman
-                    _cache["ts"] = now
-                    _cache["source"] = name
-                    logger.info("نرخ دلار از منبع '%s' دریافت شد: %s تومان", name, toman)
-                    return toman
-                except Exception as e:
-                    last_err = e
-                    if attempt < RETRY_COUNT:
-                        logger.warning("تلاش %s/%s برای منبع '%s' ناموفق بود، تلاش دوباره: %s", attempt, RETRY_COUNT, name, e)
-                        await asyncio.sleep(1)
-                    continue
-            errors.append(_fmt_err(name, last_err))
-            logger.warning("دریافت نرخ از منبع '%s' ناموفق بود: %s", name, last_err)
+    connector = _make_connector()
+    try:
+        async with aiohttp.ClientSession(connector=connector) as session:
+            for name, provider in _PROVIDERS:
+                last_err = None
+                for attempt in range(1, RETRY_COUNT + 1):
+                    try:
+                        toman = await provider(session)
+                        if toman <= 0:
+                            raise ValueError("نرخ دریافتی نامعتبر است (<= 0).")
+                        _cache["rate"] = toman
+                        _cache["ts"] = now
+                        _cache["source"] = name
+                        logger.info("نرخ دلار از منبع '%s' دریافت شد: %s تومان", name, toman)
+                        return toman
+                    except Exception as e:
+                        last_err = e
+                        if attempt < RETRY_COUNT:
+                            logger.warning("تلاش %s/%s برای منبع '%s' ناموفق بود، تلاش دوباره: %s", attempt, RETRY_COUNT, name, e)
+                            await asyncio.sleep(1)
+                        continue
+                errors.append(_fmt_err(name, last_err))
+                logger.warning("دریافت نرخ از منبع '%s' ناموفق بود: %s", name, last_err)
 
-    logger.error("دریافت نرخ دلار از همه‌ی منابع ناموفق بود: %s", " | ".join(errors))
-    if _cache["rate"]:
-        logger.warning("استفاده از آخرین نرخ کش‌شده (منبع: %s) به‌دلیل شکست همه‌ی منابع.", _cache["source"])
-        return _cache["rate"]
-    if manual_fallback and manual_fallback > 0:
-        logger.warning("استفاده از نرخ دستی پشتیبان (%s تومان) به‌دلیل شکست همه‌ی منابع زنده.", manual_fallback)
-        _cache["rate"] = manual_fallback
-        _cache["ts"] = now
-        _cache["source"] = "manual"
-        return manual_fallback
-    raise RuntimeError(
-        "دریافت نرخ خودکار از همه‌ی منابع (tgju/نوبیتکس/والکس/coingecko) ناموفق بود. "
-        "احتمالاً IP سرور توسط این سرویس‌ها بلاک/فیلتر شده — می‌توانید در تنظیمات یک «نرخ دستی "
-        "پشتیبان» وارد کنید تا در چنین مواقعی سایت از کار نیفتد. جزئیات: " + " | ".join(errors)
-    )
+            logger.error("دریافت نرخ دلار از همه‌ی منابع ناموفق بود: %s", " | ".join(errors))
+        if _cache["rate"]:
+            logger.warning("استفاده از آخرین نرخ کش‌شده (منبع: %s) به‌دلیل شکست همه‌ی منابع.", _cache["source"])
+            return _cache["rate"]
+        if manual_fallback and manual_fallback > 0:
+            logger.warning("استفاده از نرخ دستی پشتیبان (%s تومان) به‌دلیل شکست همه‌ی منابع زنده.", manual_fallback)
+            _cache["rate"] = manual_fallback
+            _cache["ts"] = now
+            _cache["source"] = "manual"
+            return manual_fallback
+        raise RuntimeError(
+            "دریافت نرخ خودکار از همه‌ی منابع (tgju/نوبیتکس/والکس/coingecko) ناموفق بود. "
+            "احتمالاً IP سرور توسط این سرویس‌ها بلاک/فیلتر شده — می‌توانید در تنظیمات یک «نرخ دستی "
+            "پشتیبان» وارد کنید تا در چنین مواقعی سایت از کار نیفتد. جزئیات: " + " | ".join(errors)
+        )
+    finally:
+        try:
+            await connector.close()
+        except Exception:
+            pass
 
 
 def get_cache_status() -> dict:

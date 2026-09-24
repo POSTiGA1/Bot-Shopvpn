@@ -11,11 +11,13 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 import report_router
+from service_alerts import send_service_alert
 from panel_providers import get_provider
 
 logger = logging.getLogger(__name__)
@@ -85,6 +87,68 @@ async def _provider_action(db, row, action):
         return False, str(exc)
 
 
+def _tehran_now():
+    return datetime.now(ZoneInfo("Asia/Tehran"))
+
+
+def _valid_daily_time(value):
+    try:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        hour, minute = raw.split(":", 1)
+        hour, minute = int(hour), int(minute)
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+        return hour, minute
+    except (TypeError, ValueError):
+        return None
+
+
+async def delete_inactive_configs_once(bot: Bot, db):
+    """F138: در ساعت تنظیم‌شده، کانفیگ‌های عمداً غیرفعال‌شده را حذف می‌کند."""
+    schedule = _valid_daily_time(db.get_setting("inactive_config_delete_time", ""))
+    if schedule is None:
+        return {"deleted": 0, "failed": 0, "disabled": True}
+
+    now = _tehran_now()
+    if (now.hour, now.minute) < schedule:
+        return {"deleted": 0, "failed": 0, "disabled": False, "due": False}
+
+    last_run = db.get_setting("inactive_config_delete_last_run", "") or ""
+    today = now.date().isoformat()
+    if last_run == today:
+        return {"deleted": 0, "failed": 0, "disabled": False, "due": False, "already_run": True}
+    db.set_setting("inactive_config_delete_last_run", today)
+
+    rows = await asyncio.to_thread(db.get_inactive_custom_configs_for_scheduled_delete)
+    deleted = failed = 0
+    for row in rows:
+        ok, reason = await _provider_action(db, row, "delete")
+        if not ok:
+            failed += 1
+            logger.warning("F138: حذف کانفیگ #%s ناموفق: %s", row["id"], reason)
+            continue
+        if await asyncio.to_thread(db.mark_cleanup_deleted, row["id"], now.astimezone(ZoneInfo("UTC")).replace(tzinfo=None).isoformat()):
+            deleted += 1
+            await asyncio.to_thread(
+                db.add_custom_config_history, row["id"], "inactive_scheduled_delete",
+                f"F138: حذف خودکار در ساعت {schedule[0]:02d}:{schedule[1]:02d} تهران",
+            )
+            try:
+                await _notify_user(bot, row["user_id"], "🗑 کانفیگ غیرفعال شما طبق زمان‌بندی حذف خودکار از پنل حذف شد.")
+            except Exception:
+                pass
+
+    if deleted or failed:
+        await _notify_admins(
+            bot, db,
+            f"🧹 F138 — حذف زمان‌بندی‌شده کانفیگ‌های غیرفعال\n\n"
+            f"🗑 حذف‌شده: {deleted}\n❌ ناموفق: {failed}\n🕐 ساعت اجرا: {schedule[0]:02d}:{schedule[1]:02d} تهران",
+        )
+    return {"deleted": deleted, "failed": failed, "disabled": False, "due": True}
+
+
 async def cleanup_once(bot: Bot, db):
     """یک دور پاکسازی را اجرا می‌کند. برای تست واحد نیز قابل فراخوانی است."""
     now = _utcnow()
@@ -94,8 +158,21 @@ async def cleanup_once(bot: Bot, db):
     warning_days = _safe_int(db, "expired_cleanup_warning_days", 3)
     dry_run = _safe_bool(db, "expired_cleanup_dry_run", True)
 
+    # اعلان اتمام مستقل از قابلیت پاکسازی است؛ حتی اگر حذف خودکار خاموش باشد،
+    # رسیدن سرویس به expires_at فقط یک‌بار در کانال اعلام می‌شود.
+    expiry_rows = await asyncio.to_thread(db.get_service_expiry_notification_candidates, now_iso)
+    expiry_notified = 0
+    for row in expiry_rows:
+        if await asyncio.to_thread(db.mark_service_expiry_alert_sent, row["id"], now_iso):
+            expiry_notified += 1
+            exp = _parse_iso(row["expires_at"])
+            await send_service_alert(
+                bot, db,
+                f"⏰ اتمام کانفیگ\n\n👤 کاربر: {row['user_id']}\n🔗 سرویس #{row['id']}\n📌 نام کاربری پنل: {row['username']}\n📅 زمان انقضا: {exp.strftime('%Y-%m-%d %H:%M') if exp else row['expires_at']}"
+            )
+
     if expired_days == 0 and test_days == 0:
-        return {"soft": 0, "deleted": 0, "warned": 0, "dry_run": dry_run, "candidates": []}
+        return {"soft": 0, "deleted": 0, "warned": 0, "expiry_notified": expiry_notified, "dry_run": dry_run, "candidates": []}
 
     # dry-run: هیچ تغییر روی پنل/DB انجام نمی‌دهیم و فقط فهرست نامزدها را به ادمین می‌دهیم.
     rows = await asyncio.to_thread(db.get_cleanup_candidates, now_iso)
@@ -205,9 +282,36 @@ async def cleanup_once(bot: Bot, db):
         "soft": soft_count,
         "deleted": deleted_count,
         "warned": warned_count,
+        "expiry_notified": expiry_notified,
         "dry_run": False,
         "candidates": [r["id"] for r, *_ in candidates],
     }
+
+
+async def expire_stale_discount_orders_once(bot: Bot, db):
+    """قابلیت ۸۶: سفارش‌های pendingِ رهاشده (کارت‌به‌کارت انتخاب شده ولی رسیدی
+    فرستاده نشده) که کد تخفیف دارند را بعد از مهلت تنظیم‌شده منقضی می‌کند تا
+    کد تخفیف/کیف‌پول برای همیشه گیر نکند؛ ۰ یعنی این قابلیت غیرفعال است."""
+    timeout_minutes = _safe_int(db, "discount_order_expiry_minutes", 60)
+    if timeout_minutes <= 0:
+        return {"expired": []}
+    expired_ids = await asyncio.to_thread(db.expire_stale_discount_orders, timeout_minutes)
+    for order_id in expired_ids:
+        try:
+            order = await asyncio.to_thread(db.get_order, order_id)
+        except Exception:
+            order = None
+        if not order:
+            continue
+        await _notify_user(
+            bot, order["user_id"],
+            f"⌛ سفارش #{order_id} شما به دلیل ارسال‌نشدن رسید پرداخت تا مهلت تعیین‌شده، "
+            f"به‌صورت خودکار لغو شد.\nکد تخفیف و مبلغ کیف پول (در صورت استفاده) به حالت "
+            f"قبل بازگشت داده شد؛ در صورت تمایل می‌توانید دوباره سفارش دهید.",
+        )
+    if expired_ids:
+        logger.info("قابلیت ۸۶: %s سفارش رهاشده با کد تخفیف منقضی شد: %s", len(expired_ids), expired_ids)
+    return {"expired": expired_ids}
 
 
 async def cleanup_loop(bot: Bot, db, interval: int = 3600):
@@ -215,8 +319,15 @@ async def cleanup_loop(bot: Bot, db, interval: int = 3600):
     while True:
         try:
             await cleanup_once(bot, db)
+            await delete_inactive_configs_once(bot, db)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("خطا در حلقه F14 cleanup")
+        try:
+            await expire_stale_discount_orders_once(bot, db)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("خطا در انقضای خودکار سفارش‌های رهاشده با کد تخفیف (قابلیت ۸۶)")
         await asyncio.sleep(max(300, int(interval)))

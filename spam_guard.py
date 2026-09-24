@@ -1,5 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Middleware ضداسپم: محدودیت نرخ رویداد هر کاربر با هشدار و سپس مسدودسازی."""
+"""
+Middleware ضداسپم: محدودیت نرخ رویداد هر کاربر با هشدار و سپس مسدودسازی.
+
+چرا RAM-only (عمدی):
+- ThrottleMiddleware قبل از هر IO باید ارزان باشد؛ persist کردن هر پیام در
+  SQLite همان قفل WAL را تشدید می‌کند که دلیل وجود cache_autorefresh_loop است.
+- جدول admins بسیار کم‌تغییر است ولی هر پیام نرخ را می‌سنجد؛ خواندن/نوشتن
+  دائمی روی دیسک برای این hot path منطقی نیست.
+- PRUNE تنبل (سقف 5000 کاربر + هرس دوره‌ای) برای حافظه کافی است؛ در صورت
+  ری‌استارت، state از بین می‌رود که برای rate-limit قابل قبول است.
+- اگر در آینده persist لازم شد، فقط strikes را opt-in در settings نگه دارید،
+  نه events.
+"""
 
 import asyncio
 import html
@@ -63,6 +75,8 @@ class ThrottleMiddleware(BaseMiddleware):
         return True
 
     def _prune(self, now: float, window: int):
+        if len(self._states) < PRUNE_THRESHOLD:
+            return
         stale = [
             uid for uid, st in self._states.items()
             if st.muted_until < now
@@ -71,6 +85,10 @@ class ThrottleMiddleware(BaseMiddleware):
         ]
         for uid in stale:
             del self._states[uid]
+        if len(self._states) >= PRUNE_THRESHOLD and not stale:
+            oldest = sorted(self._states.items(), key=lambda kv: kv[1].last_strike)[: max(1, PRUNE_THRESHOLD // 10)]
+            for uid, _ in oldest:
+                self._states.pop(uid, None)
 
     async def __call__(self, handler, event, data: dict):
         user = data.get("event_from_user")

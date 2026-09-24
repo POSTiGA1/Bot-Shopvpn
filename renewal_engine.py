@@ -10,6 +10,7 @@ abangateway_payment.finalize_paid_order صدا زده می‌شود).
 """
 
 from panel_providers import get_provider, PanelError
+from user_limit import provider_kwargs
 
 
 class RenewalError(Exception):
@@ -34,11 +35,24 @@ async def execute_renewal(db, order) -> str:
         if not server or not server["is_active"]:
             raise RenewalError("سرور پنل مربوط به این سرویس یافت نشد یا غیرفعال است.")
         set_volume_gb = None
+        renewal_users = order["renewal_user_limit"] if "renewal_user_limit" in order.keys() else None
+        if mode == "users":
+            if not renewal_users:
+                raise RenewalError("تعداد کاربر درخواستی نامعتبر است.")
+            try:
+                provider = get_provider(server)
+                if not getattr(provider, "supports_user_limit", False):
+                    raise RenewalError("پنل این سرویس از محدودیت کاربر پشتیبانی نمی‌کند.")
+                await provider.update_user(cc["username"], **provider_kwargs(provider, renewal_users))
+            except PanelError as e:
+                raise RenewalError(str(e)) from e
+            db.set_custom_config_user_limit(cc["id"], renewal_users)
+            return f"✅ تعداد کاربر همزمان سرویس شما به {renewal_users} افزایش یافت."
         try:
             provider = get_provider(server)
             await provider.update_user(
                 cc["username"], add_volume_gb=add_volume, add_days=add_days, reset_usage=(mode == "full"),
-                preserve_remaining=(mode == "full"),
+                preserve_remaining=(mode == "full"), **provider_kwargs(provider, renewal_users),
             )
             if mode == "full" and add_volume:
                 # سقف واقعیِ بعد از preserve_remaining را از خود پنل می‌خوانیم تا رکورد
@@ -50,6 +64,8 @@ async def execute_renewal(db, order) -> str:
         db.apply_custom_config_renewal(
             cc["id"], add_volume, add_days, full_reset=(mode == "full"), set_volume_gb=set_volume_gb,
         )
+        if renewal_users and getattr(provider, "supports_user_limit", False):
+            db.set_custom_config_user_limit(cc["id"], renewal_users)
         return "✅ سرویس شما با موفقیت تمدید شد."
 
     if kind == "config":

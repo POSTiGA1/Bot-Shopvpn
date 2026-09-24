@@ -12,6 +12,11 @@ class DiscountEntry(StatesGroup):
     waiting_code = State()
 
 
+class RenewalDiscountEntry(StatesGroup):
+    """قابلیت ۵۱: کد تخفیف در بخش «تمدید کامل سرویس» (نه تمدید حجم/زمان)."""
+    waiting_code = State()
+
+
 class WalletTopup(StatesGroup):
     waiting_amount = State()
     waiting_receipt = State()
@@ -60,6 +65,14 @@ class AdminSetSupportContact(StatesGroup):
 class AdminAIFaqAdd(StatesGroup):
     waiting_question = State()
     waiting_answer = State()
+
+
+class AdminTutorialDeviceAdd(StatesGroup):
+    waiting_name = State()
+
+
+class AdminTutorialStepAdd(StatesGroup):
+    waiting_content = State()
 
 
 class AdminSetGeminiKey(StatesGroup):
@@ -116,13 +129,22 @@ class AdminEditTestPlan(StatesGroup):
     waiting_duration_hours = State()
 
 
+class AdminEditTutorial(StatesGroup):
+    waiting_content = State()
+
+
 class AdminCleanupSettings(StatesGroup):
     waiting_expired_days = State()
     waiting_test_days = State()
     waiting_warning_days = State()
+    waiting_inactive_time = State()
 
 
 class AdminForceJoin(StatesGroup):
+    waiting_channel = State()
+
+
+class AdminServiceAlertChannel(StatesGroup):
     waiting_channel = State()
 
 
@@ -174,6 +196,7 @@ class AdminBroadcast(StatesGroup):
     waiting_duration = State()
     waiting_custom_minutes = State()
     waiting_schedule_time = State()
+    waiting_no_purchase_days = State()
 
 
 class AdminXuiInbound(StatesGroup):
@@ -181,6 +204,11 @@ class AdminXuiInbound(StatesGroup):
     waiting_network = State()
     waiting_tls = State()
     waiting_port = State()
+
+
+class AdminXuiRestore(StatesGroup):
+    waiting_file = State()
+    waiting_confirm = State()
 
 
 class AdminDeepLinkTools(StatesGroup):
@@ -207,6 +235,14 @@ class AdminChangeRole(StatesGroup):
 
 class AdminEditWelcome(StatesGroup):
     waiting_text = State()
+
+
+class AdminEditPostDeliveryText(StatesGroup):
+    waiting_text = State()
+
+
+class AdminSetQrBackground(StatesGroup):
+    waiting_photo = State()
 
 
 class AdminCreateWalletGift(StatesGroup):
@@ -240,6 +276,15 @@ class AdminReferralMultilevel(StatesGroup):
 class AdminReferralCommissionMax(StatesGroup):
     waiting_value = State()
 
+class AdminReferralRenewalPercent(StatesGroup):
+    waiting_value = State()
+
+class AdminReferralRenewalMax(StatesGroup):
+    waiting_value = State()
+
+class AdminReferralMinPurchase(StatesGroup):
+    waiting_value = State()
+
 
 class AdminReferralFreeConfigThreshold(StatesGroup):
     waiting_value = State()
@@ -253,9 +298,18 @@ class AdminReferralInviteBonusMax(StatesGroup):
     waiting_value = State()
 
 
+class AdminSignupGiftAmount(StatesGroup):
+    waiting_value = State()
+
+
+class AdminSignupGiftDelay(StatesGroup):
+    waiting_value = State()
+
+
 class AdminResellerCredit(StatesGroup):
     waiting_user_id = State()
     waiting_delta = State()
+    waiting_limit = State()
 
 
 class AdminResellerMembership(StatesGroup):
@@ -386,6 +440,8 @@ class AdminAddPanelServer(StatesGroup):
 class AdminEditProduct(StatesGroup):
     waiting_volume = State()
     waiting_sub_base_url = State()
+    waiting_user_extra_price = State()
+    waiting_user_max = State()
 
 
 class AdminBulkPrice(StatesGroup):
@@ -394,6 +450,21 @@ class AdminBulkPrice(StatesGroup):
     waiting_mode = State()
     waiting_value = State()
     waiting_rounding = State()
+    waiting_confirm = State()
+
+
+class AdminBulkWalletDeduct(StatesGroup):
+    waiting_status = State()
+    waiting_usertype = State()
+    waiting_amount = State()
+    waiting_confirm = State()
+
+
+class AdminBulkWalletCredit(StatesGroup):
+    waiting_status = State()
+    waiting_usertype = State()
+    waiting_amount = State()
+    waiting_message = State()
     waiting_confirm = State()
 
 
@@ -406,11 +477,19 @@ class AdminLocationTransferSettings(StatesGroup):
     waiting_free_quota = State()
 
 
+class AdminUserFullStats(StatesGroup):
+    waiting_identifier = State()
+
+
 class AdminSetPanelTemplate(StatesGroup):
     waiting_username = State()
 
 
 class AdminSetPanelSubUrl(StatesGroup):
+    waiting_url = State()
+
+
+class AdminSetPanelSocksProxy(StatesGroup):
     waiting_url = State()
 
 

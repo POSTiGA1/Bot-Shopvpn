@@ -5,6 +5,7 @@ fastapi>=0.110
 uvicorn>=0.29
 python-multipart>=0.0.9
 aiohttp>=3.9
+aiohttp_socks>=0.9.1
 aiodns>=3.2
 psutil>=5.9
 pywebpush>=2.0.0

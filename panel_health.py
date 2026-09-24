@@ -28,12 +28,11 @@ async def _db(fn, *args, **kwargs):
 async def _probe(server, sem):
     async with sem:
         try:
-            ok = await asyncio.wait_for(get_provider(server).test_connection(), PROBE_TIMEOUT)
+            return await asyncio.wait_for(get_provider(server).check_connection(), PROBE_TIMEOUT)
         except asyncio.TimeoutError:
             return False, "timeout"
         except Exception as e:
-            return False, (str(e) or type(e).__name__)[:200]
-        return (True, "") if ok else (False, "اتصال یا احراز هویت ناموفق")
+            return False, (str(e) or type(e).__name__)[:300]
 
 
 async def _reference_reachable() -> bool:

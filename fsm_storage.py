@@ -17,14 +17,15 @@ MemoryStorage تمام state‌های در حال انتظار (مثلاً «ک�
 (bot, chat, user, ...)) را پیاده‌سازی می‌کند اما روی یک فایل SQLite کنار
 دیتابیس اصلی همان بات ذخیره می‌شود، پس با ری‌استارت پروسه از بین نمی‌رود.
 
-عمداً از sqlite3 استاندارد (synchronous) استفاده شده - دقیقاً هم‌سو با سبک
-database.py در همین پروژه - چون عملیات‌های state (خواندن/نوشتن چند بایت)
-آن‌قدر سریع هستند که مسدودکردن کوتاه event loop قابل چشم‌پوشی است، در حالی
-که وابستگی جدید (مثل Redis) به پروژه اضافه نمی‌کند.
+فیکس ۱۴۰۴: عملیات‌های SQLite قبلاً مستقیم روی event loop اجرا می‌شدند
+(synchronous) و می‌توانستند آن را کوتاه بلوکه کنند. حالا از
+asyncio.to_thread استفاده می‌شود تا هیچ‌وقت event loop فریز نشود.
 """
 
+import asyncio
 import json
 import sqlite3
+import threading
 from typing import Any, Dict, Optional
 
 from aiogram.fsm.storage.base import BaseStorage, StorageKey
@@ -51,15 +52,10 @@ class SQLiteStorage(BaseStorage):
             """
         )
         self._conn.commit()
+        self._lock = threading.Lock()
 
     @staticmethod
     def _key_tuple(key: StorageKey):
-        # نکته‌ی مهم: در SQL دو مقدار NULL هیچ‌وقت «برابر» در نظر گرفته نمی‌شوند،
-        # پس اگر thread_id/business_connection_id را NULL نگه داریم، تشخیص
-        # تعارض PRIMARY KEY توسط ON CONFLICT کار نمی‌کند و هر بار یک ردیف
-        # جدید insert می‌شود (به‌جای آپدیت همان ردیف) - این‌ها معمولاً NULL
-        # هستند (چت خصوصی معمولی)، پس با یک مقدار جایگزین (0 / رشته‌ی خالی)
-        # ذخیره می‌شوند تا مقایسه‌ی تساوی درست کار کند.
         thread_id = getattr(key, "thread_id", None)
         business_connection_id = getattr(key, "business_connection_id", None)
         return (
@@ -71,56 +67,75 @@ class SQLiteStorage(BaseStorage):
             getattr(key, "destiny", "default"),
         )
 
+    def _set_state_sync(self, key_tuple, state_value):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO fsm_storage "
+                "(bot_id, chat_id, user_id, thread_id, business_connection_id, destiny, state) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (bot_id, chat_id, user_id, thread_id, business_connection_id, destiny) "
+                "DO UPDATE SET state=excluded.state",
+                (*key_tuple, state_value),
+            )
+            self._conn.commit()
+
+    def _get_state_sync(self, key_tuple):
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT state FROM fsm_storage WHERE bot_id=? AND chat_id=? AND user_id=? "
+                "AND thread_id=? AND business_connection_id=? AND destiny=?",
+                key_tuple,
+            )
+            r = cur.fetchone()
+            return r[0] if r else None
+
+    def _set_data_sync(self, key_tuple, payload):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO fsm_storage "
+                "(bot_id, chat_id, user_id, thread_id, business_connection_id, destiny, data) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (bot_id, chat_id, user_id, thread_id, business_connection_id, destiny) "
+                "DO UPDATE SET data=excluded.data",
+                (*key_tuple, payload),
+            )
+            self._conn.commit()
+
+    def _get_data_sync(self, key_tuple):
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT data FROM fsm_storage WHERE bot_id=? AND chat_id=? AND user_id=? "
+                "AND thread_id=? AND business_connection_id=? AND destiny=?",
+                key_tuple,
+            )
+            r = cur.fetchone()
+            if not r or not r[0]:
+                return None
+            return r[0]
+
+    def _close_sync(self):
+        with self._lock:
+            self._conn.close()
+
     async def set_state(self, key: StorageKey, state: Any = None) -> None:
         state_value = state.state if hasattr(state, "state") else state
-        row = self._key_tuple(key)
-        self._conn.execute(
-            "INSERT INTO fsm_storage "
-            "(bot_id, chat_id, user_id, thread_id, business_connection_id, destiny, state) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT (bot_id, chat_id, user_id, thread_id, business_connection_id, destiny) "
-            "DO UPDATE SET state=excluded.state",
-            (*row, state_value),
-        )
-        self._conn.commit()
+        await asyncio.to_thread(self._set_state_sync, self._key_tuple(key), state_value)
 
     async def get_state(self, key: StorageKey) -> Optional[str]:
-        row = self._key_tuple(key)
-        cur = self._conn.execute(
-            "SELECT state FROM fsm_storage WHERE bot_id=? AND chat_id=? AND user_id=? "
-            "AND thread_id=? AND business_connection_id=? AND destiny=?",
-            row,
-        )
-        r = cur.fetchone()
-        return r[0] if r else None
+        return await asyncio.to_thread(self._get_state_sync, self._key_tuple(key))
 
     async def set_data(self, key: StorageKey, data: Dict[str, Any]) -> None:
-        row = self._key_tuple(key)
         payload = json.dumps(data or {}, ensure_ascii=False)
-        self._conn.execute(
-            "INSERT INTO fsm_storage "
-            "(bot_id, chat_id, user_id, thread_id, business_connection_id, destiny, data) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT (bot_id, chat_id, user_id, thread_id, business_connection_id, destiny) "
-            "DO UPDATE SET data=excluded.data",
-            (*row, payload),
-        )
-        self._conn.commit()
+        await asyncio.to_thread(self._set_data_sync, self._key_tuple(key), payload)
 
     async def get_data(self, key: StorageKey) -> Dict[str, Any]:
-        row = self._key_tuple(key)
-        cur = self._conn.execute(
-            "SELECT data FROM fsm_storage WHERE bot_id=? AND chat_id=? AND user_id=? "
-            "AND thread_id=? AND business_connection_id=? AND destiny=?",
-            row,
-        )
-        r = cur.fetchone()
-        if not r or not r[0]:
+        raw = await asyncio.to_thread(self._get_data_sync, self._key_tuple(key))
+        if raw is None:
             return {}
         try:
-            return json.loads(r[0])
+            return json.loads(raw)
         except (TypeError, ValueError):
             return {}
 
     async def close(self) -> None:
-        self._conn.close()
+        await asyncio.to_thread(self._close_sync)

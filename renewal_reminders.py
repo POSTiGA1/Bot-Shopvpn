@@ -21,6 +21,7 @@ STATUS_KEY_LAST_VOLUME_SENT = "_job_renewal_last_volume_sent"
 
 from sub_info import fetch_sub_info
 from jalali import to_jalali_str
+import report_router
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +274,8 @@ async def check_and_process_auto_renewals(bot, db) -> int:
         label = row["display_name"] if ("display_name" in row.keys() and row["display_name"]) else row["username"]
 
         wallet_credit = await _db(db.get_wallet_credit, user_id)
-        if price <= 0 or wallet_credit < price:
+        plan = await _db(db.plan_wallet_spend, user_id, price)
+        if price <= 0 or plan["wallet_used"] < price:
             if row["auto_renew_alert_date"] != today:
                 try:
                     await bot.send_message(
@@ -289,6 +291,24 @@ async def check_and_process_auto_renewals(bot, db) -> int:
 
         server = await _db(db.get_panel_server, row["panel_server_id"]) if row["panel_server_id"] else None
         if not server or not server["is_active"]:
+            if row["auto_renew_alert_date"] != today:
+                try:
+                    await bot.send_message(
+                        user_id,
+                        f"⚠️ تمدید خودکار کانفیگ «{label}» انجام نشد؛ سرور پنل این سرویس غیرفعال یا حذف شده است.\n"
+                        "لطفاً با پشتیبانی تماس بگیرید.",
+                    )
+                except Exception:
+                    logger.warning("ارسال هشدار تمدید خودکار (سرور غیرفعال) به کاربر %s ناموفق بود.", user_id)
+                try:
+                    await report_router.send_text(
+                        bot, db, "service",
+                        f"⚠️ تمدید خودکار کانفیگ «{label}» (کاربر {user_id}) انجام نشد: "
+                        f"سرور پنل #{row['panel_server_id']} غیرفعال یا حذف شده است.",
+                    )
+                except Exception:
+                    logger.warning("ارسال گزارش ادمین برای تمدید خودکار ناموفق (سرور غیرفعال) شکست خورد.")
+                await _db(db.mark_custom_config_auto_renew_alert, row["id"], today)
             continue
         if not await _db(db.deduct_wallet_credit, user_id, price, True):
             continue
@@ -297,10 +317,10 @@ async def check_and_process_auto_renewals(bot, db) -> int:
             await provider.update_user(row["username"], add_volume_gb=volume_gb, add_days=duration_days, reset_usage=True)
         except PanelError:
             logger.exception("تمدید خودکار روی پنل برای کانفیگ «%s» ناموفق بود.", row["username"])
-            await _db(db.add_wallet_credit, user_id, price)
+            await _db(db.add_wallet_credit, user_id, price, "order_refund", "بازگشت وجه تمدید خودکار ناموفق")
             continue
         except Exception:
-            await _db(db.add_wallet_credit, user_id, price)
+            await _db(db.add_wallet_credit, user_id, price, "order_refund", "بازگشت وجه تمدید خودکار ناموفق")
             raise
 
         await _db(db.apply_custom_config_renewal, row["id"], add_volume_gb=0, add_days=duration_days, full_reset=True)

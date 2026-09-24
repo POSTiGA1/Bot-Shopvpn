@@ -41,9 +41,9 @@ from panel_health import panel_health_loop
 from daily_report import daily_report_loop
 from cleanup_loop import cleanup_loop
 from lottery_loop import lottery_loop
+from signup_gift import signup_gift_loop
 from report_router import ReportGroupGuardMiddleware
 from global_switch import GlobalBotSwitchMiddleware
-# from phone_auth import PhoneAuthMiddleware  # file missing in repo
 import keyboards as kb
 
 logger = logging.getLogger(__name__)
@@ -332,6 +332,7 @@ class BotManager:
         cleanup_task = asyncio.create_task(cleanup_loop(bot, db))
         lottery_task = asyncio.create_task(lottery_loop(bot, db))
         reseller_expiry_task = asyncio.create_task(db.reseller_expiry_loop(bot))
+        signup_gift_task = asyncio.create_task(signup_gift_loop(bot, db))
 
         self.instances[token] = {
             "bot": bot, "dp": dp, "task": task, "reminder_task": reminder_task,
@@ -341,10 +342,18 @@ class BotManager:
             "panel_health_task": panel_health_task, "daily_report_task": daily_report_task,
             "scheduled_broadcast_task": scheduled_broadcast_task,
             "cleanup_task": cleanup_task, "lottery_task": lottery_task,
-            "reseller_expiry_task": reseller_expiry_task, "db_path": db_path,
+            "reseller_expiry_task": reseller_expiry_task, "signup_gift_task": signup_gift_task,
+            "db_path": db_path,
         }
         logger.info("بات با db_path=%s راه‌اندازی شد.", db_path)
         return True
+
+    _STOP_TASK_KEYS = (
+        "reminder_task", "connect_alert_task", "backup_task",
+        "scheduled_broadcast_task", "cache_refresh_task", "temp_msg_task",
+        "extra_gateway_task", "panel_health_task", "daily_report_task",
+        "cleanup_task", "lottery_task", "reseller_expiry_task", "signup_gift_task",
+    )
 
     async def stop_bot(self, token: str) -> bool:
         inst = self.instances.pop(token, None)
@@ -355,88 +364,13 @@ class BotManager:
             await inst["task"]
         except Exception:
             pass
-        reminder_task = inst.get("reminder_task")
-        if reminder_task:
-            reminder_task.cancel()
+        for key in self._STOP_TASK_KEYS:
+            task = inst.get(key)
+            if task is None:
+                continue
+            task.cancel()
             try:
-                await reminder_task
-            except Exception:
-                pass
-        connect_alert_task = inst.get("connect_alert_task")
-        if connect_alert_task:
-            connect_alert_task.cancel()
-            try:
-                await connect_alert_task
-            except Exception:
-                pass
-        backup_task = inst.get("backup_task")
-        if backup_task:
-            backup_task.cancel()
-            try:
-                await backup_task
-            except Exception:
-                pass
-        scheduled_broadcast_task = inst.get("scheduled_broadcast_task")
-        if scheduled_broadcast_task:
-            scheduled_broadcast_task.cancel()
-            try:
-                await scheduled_broadcast_task
-            except Exception:
-                pass
-        cache_refresh_task = inst.get("cache_refresh_task")
-        if cache_refresh_task:
-            cache_refresh_task.cancel()
-            try:
-                await cache_refresh_task
-            except Exception:
-                pass
-        temp_msg_task = inst.get("temp_msg_task")
-        if temp_msg_task:
-            temp_msg_task.cancel()
-            try:
-                await temp_msg_task
-            except Exception:
-                pass
-        extra_gateway_task = inst.get("extra_gateway_task")
-        if extra_gateway_task:
-            extra_gateway_task.cancel()
-            try:
-                await extra_gateway_task
-            except Exception:
-                pass
-        panel_health_task = inst.get("panel_health_task")
-        if panel_health_task:
-            panel_health_task.cancel()
-            try:
-                await panel_health_task
-            except Exception:
-                pass
-        daily_report_task = inst.get("daily_report_task")
-        if daily_report_task:
-            daily_report_task.cancel()
-            try:
-                await daily_report_task
-            except Exception:
-                pass
-        cleanup_task = inst.get("cleanup_task")
-        if cleanup_task:
-            cleanup_task.cancel()
-            try:
-                await cleanup_task
-            except Exception:
-                pass
-        lottery_task = inst.get("lottery_task")
-        if lottery_task:
-            lottery_task.cancel()
-            try:
-                await lottery_task
-            except Exception:
-                pass
-        reseller_expiry_task = inst.get("reseller_expiry_task")
-        if reseller_expiry_task:
-            reseller_expiry_task.cancel()
-            try:
-                await reseller_expiry_task
+                await task
             except Exception:
                 pass
         if BOT_MODE == "webhook" and self.webhook_server is not None:

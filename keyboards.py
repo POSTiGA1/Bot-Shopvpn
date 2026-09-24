@@ -356,7 +356,7 @@ _PRODUCT_CONFIRM_BUILDERS = {
 }
 
 
-def product_confirm_kb(db, product_id, quantity: int = 1, max_qty: int = 1, bulk_step: int = 0) -> InlineKeyboardMarkup:
+def product_confirm_kb(db, product_id, quantity: int = 1, max_qty: int = 1, bulk_step: int = 0, users_change: bool = False) -> InlineKeyboardMarkup:
     max_qty = max(max_qty, 1)
     quantity = max(1, min(quantity, max_qty))
 
@@ -380,7 +380,31 @@ def product_confirm_kb(db, product_id, quantity: int = 1, max_qty: int = 1, bulk
             rows.append(bulk_row)
     for key in order:
         rows.append([_PRODUCT_CONFIRM_BUILDERS[key](db, product_id, quantity)])
+    if users_change:
+        rows.append([InlineKeyboardButton(text="👥 تغییر تعداد کاربر", callback_data=f"buy_users_pick:{product_id}")])
     rows.append([_styled_inline(db, back_text, "back_categories", "btn_buy_back_style")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def user_count_picker_kb(product, max_users: int, callback_prefix: str, back_cb: str, current_users: int = 0) -> InlineKeyboardMarkup:
+    from user_limit import price_for_users, upgrade_price
+    if current_users:
+        rows = [
+            [InlineKeyboardButton(
+                text=f"👥 {n} کاربر (+{n - current_users}) - {upgrade_price(product, current_users, n):,} تومان",
+                callback_data=f"{callback_prefix}:{n}",
+            )]
+            for n in range(current_users + 1, max_users + 1)
+        ]
+    else:
+        rows = [
+            [InlineKeyboardButton(
+                text=f"👥 {n} کاربر - {price_for_users(product, n):,} تومان",
+                callback_data=f"{callback_prefix}:{n}",
+            )]
+            for n in range(1, max_users + 1)
+        ]
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -417,8 +441,43 @@ def custom_config_username_kb() -> InlineKeyboardMarkup:
 # ---------------------------------------------------------------------------
 
 def my_orders_menu_kb(items) -> InlineKeyboardMarkup:
-    """items: لیستی از دیکشنری‌های {cb_id, label} که هر کدام یک ردیف/دکمه‌ی جدا می‌شوند."""
-    rows = [[InlineKeyboardButton(text=it["label"], callback_data=f"mo_v:{it['cb_id']}")] for it in items]
+    """لیست سرویس‌های کاربر با نمایش بصری وضعیت فعال/منقضی.
+
+    برای سازگاری با callerهای قدیمی، ``items`` همچنان حداقل به ``cb_id`` و
+    ``label`` نیاز دارد؛ اگر اطلاعات وضعیت همراه آیتم باشد از آن برای رنگ‌بندی
+    استفاده می‌کنیم. وضعیت فعال با 🟢 و منقضی با 🔴 نمایش داده می‌شود.
+    """
+    from datetime import datetime
+
+    def _status_icon(item) -> str:
+        # اگر caller مستقیماً وضعیت را داده باشد، همان مرجع است.
+        status = str(item.get("status", "") or "").strip().lower()
+        if status in {"expired", "inactive", "disabled", "deactivated", "ended"}:
+            return "🔴"
+        if status in {"active", "enabled", "valid"}:
+            return "🟢"
+
+        if "is_active" in item:
+            return "🟢" if bool(item.get("is_active")) else "🔴"
+
+        # برای سرویس‌هایی که وضعیت‌شان از تاریخ انقضا قابل تشخیص است.
+        expires_at = item.get("expires_at") or item.get("config_expires_at")
+        if expires_at:
+            try:
+                exp = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+                now = datetime.now(exp.tzinfo) if exp.tzinfo else datetime.utcnow()
+                return "🟢" if exp > now else "🔴"
+            except (TypeError, ValueError):
+                pass
+        return ""
+
+    rows = []
+    for it in items:
+        icon = _status_icon(it)
+        label = str(it["label"])
+        if icon and not label.startswith(("🟢", "🔴")):
+            label = f"{icon} {label}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"mo_v:{it['cb_id']}")])
     rows.append([InlineKeyboardButton(text="⬅️ حساب کاربری", callback_data="acct:hub")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -457,7 +516,8 @@ def service_inquiry_card_kb(cb_id: str, fields: list) -> InlineKeyboardMarkup:
 
 
 def service_detail_kb(db, cb_id: str, kind: str, deletable: bool, show_links: bool = False,
-                       enabled: bool = True, auto_renew: bool = False, is_test: bool = False) -> InlineKeyboardMarkup:
+                       enabled: bool = True, auto_renew: bool = False, is_test: bool = False,
+                       can_add_users: bool = False) -> InlineKeyboardMarkup:
     """دکمه‌های صفحه‌ی جزئیات یک سرویس.
     kind == 'custom' (کاربر واقعی روی پنل): هر سه نوع تمدید + قطع دسترسی +
     بروزرسانی + کیوآر + فعال/غیرفعال + تغییر نام + تمدید خودکار + انتقال +
@@ -484,6 +544,8 @@ def service_detail_kb(db, cb_id: str, kind: str, deletable: bool, show_links: bo
             row2.append(InlineKeyboardButton(text="⏱ تمدید زمان سرویس", callback_data=f"svc_renew:time:{cb_id}"))
         if row2:
             rows.append(row2)
+        if can_add_users:
+            rows.append([InlineKeyboardButton(text="👥 افزایش تعداد کاربر", callback_data=f"svc_users:{cb_id}")])
         row3 = []
         if on("svc_show_cut_access"):
             row3.append(InlineKeyboardButton(text="🚫 قطع دسترسی و لینک جدید", callback_data=f"svc_cut:{cb_id}"))
@@ -511,6 +573,8 @@ def service_detail_kb(db, cb_id: str, kind: str, deletable: bool, show_links: bo
         if on("svc_show_history"):
             row7.append(InlineKeyboardButton(text="📜 تاریخچه سرویس", callback_data=f"svc_hist:{cb_id}"))
         row7.append(InlineKeyboardButton(text="⚠️ گزارش اختلال", callback_data=f"svc_disruption:{cb_id}"))
+        if on("svc_show_rating"):
+            row7.append(InlineKeyboardButton(text="⭐ امتیاز به سرویس", callback_data=f"svc_rate:{cb_id}"))
         if row7:
             rows.append(row7)
     if kind == "custom":
@@ -527,6 +591,8 @@ def service_detail_kb(db, cb_id: str, kind: str, deletable: bool, show_links: bo
             row4.append(InlineKeyboardButton(text="⬜ کیوآر کانفیگ", callback_data=f"svc_qr:{cb_id}"))
         if row4:
             rows.append(row4)
+        if db.get_tutorial_devices(active_only=True):
+            rows.append([InlineKeyboardButton(text="📚 آموزش اتصال", callback_data="svc_tutorial")])
         if show_links:
             rows.append([InlineKeyboardButton(text="📋 کانفیگ‌های تکی", callback_data=f"mo_links:{cb_id}")])
     if deletable and on("svc_show_delete"):
@@ -571,6 +637,23 @@ def renewal_plans_kb(products, mode: str, cb_id: str) -> InlineKeyboardMarkup:
     ]
     rows.append([InlineKeyboardButton(text="⬅️ انصراف", callback_data=f"mo_v:{cb_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# قابلیت ۵۱: صفحه‌ی تایید نهایی «تمدید کامل سرویس» - قبل از رفتن به انتخاب
+# روش پرداخت، دکمه‌ی «وارد کردن کد تخفیف» را نشان می‌دهد (دقیقاً هم‌شکل با
+# صفحه‌ی تایید خرید محصول - product_confirm_kb) تا برند/لحن یکسان بماند.
+def renewal_full_confirm_kb(db, cb_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [_styled_inline(
+            db, db.get_setting("btn_enter_code_text", "🎟 وارد کردن کد تخفیف"),
+            f"renew_enter_code:{cb_id}", "btn_enter_code_style",
+        )],
+        [_styled_inline(
+            db, db.get_setting("btn_buy_continue_text", "✅ ادامه و انتخاب پرداخت"),
+            f"renew_confirm_pay:{cb_id}", "btn_buy_continue_style",
+        )],
+        [InlineKeyboardButton(text="⬅️ انصراف", callback_data=f"mo_v:{cb_id}")],
+    ])
 
 
 def renewal_pricing_kb(db) -> InlineKeyboardMarkup:
@@ -645,6 +728,17 @@ def service_location_confirm_kb(cb_id: str, target_id: int) -> InlineKeyboardMar
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⚠️ بله، انتقال انجام شود", callback_data=f"svc_location_ok:{cb_id}:{target_id}")],
         [InlineKeyboardButton(text="⬅️ بازگشت به انتخاب لوکیشن", callback_data=f"svc_location:{cb_id}")],
+    ])
+
+
+def service_rating_kb(cb_id: str, current: int = None) -> InlineKeyboardMarkup:
+    stars_row = []
+    for n in range(1, 6):
+        text = f"✅{n}" if current == n else f"⭐{n}"
+        stars_row.append(InlineKeyboardButton(text=text, callback_data=f"svc_rate_set:{cb_id}:{n}"))
+    return InlineKeyboardMarkup(inline_keyboard=[
+        stars_row,
+        [InlineKeyboardButton(text="⬅️ بازگشت", callback_data=f"mo_v:{cb_id}")],
     ])
 
 
@@ -826,7 +920,10 @@ def order_review_kb(order_id) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="✅ تایید و ارسال کانفیگ", callback_data=f"order_approve:{order_id}"),
             InlineKeyboardButton(text="❌ رد کردن", callback_data=f"order_reject:{order_id}"),
-        ]
+        ],
+        [
+            InlineKeyboardButton(text="🚫 فیش فیک + بلاک کاربر", callback_data=f"order_fake_receipt:{order_id}"),
+        ],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -886,6 +983,44 @@ def ai_faq_admin_kb(db, items) -> InlineKeyboardMarkup:
     rows.append([InlineKeyboardButton(text="➕ افزودن سوال جدید", callback_data="adm_ai_faq_add")])
     rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:access")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def tutorial_devices_admin_kb(devices) -> InlineKeyboardMarkup:
+    """لیست دستگاه‌های آموزش اتصال برای ادمین: هرکدام دکمه‌ی مدیریت مراحل +
+    فعال/غیرفعال + حذف."""
+    rows = []
+    for d in devices:
+        state_icon = "🟢" if d["is_active"] else "⚪️"
+        rows.append([
+            InlineKeyboardButton(text=f"{d['emoji']} {d['name']}", callback_data=f"adm_tut_steps:{d['id']}"),
+            InlineKeyboardButton(text=state_icon, callback_data=f"adm_tut_dev_toggle:{d['id']}"),
+            InlineKeyboardButton(text="🗑", callback_data=f"adm_tut_dev_del:{d['id']}"),
+        ])
+    rows.append([InlineKeyboardButton(text="➕ افزودن دستگاه جدید", callback_data="adm_tut_dev_add")])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:appearance")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def tutorial_device_steps_admin_kb(device_id: int, steps) -> InlineKeyboardMarkup:
+    rows = []
+    for i, s in enumerate(steps, start=1):
+        kind = "🎬" if s["video_file_id"] else ("🖼" if s["photo_file_id"] else "📝")
+        rows.append([
+            InlineKeyboardButton(text=f"{kind} مرحله {i}", callback_data="noop"),
+            InlineKeyboardButton(text="🗑", callback_data=f"adm_tut_step_del:{s['id']}:{device_id}"),
+        ])
+    rows.append([InlineKeyboardButton(text="➕ افزودن مرحله جدید", callback_data=f"adm_tut_step_add:{device_id}")])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت به لیست دستگاه‌ها", callback_data="adm_tutorial_devices")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def tutorial_devices_user_kb(devices) -> InlineKeyboardMarkup:
+    """کیبورد انتخاب دستگاه برای کاربر، برای دیدن آموزش اتصال قدم‌به‌قدم."""
+    rows = [[InlineKeyboardButton(text=f"{d['emoji']} {d['name']}", callback_data=f"tut_pick:{d['id']}")] for d in devices]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+
 
 
 def ai_provider_choice_kb(db) -> InlineKeyboardMarkup:
@@ -1052,7 +1187,9 @@ ADMIN_PANEL_ITEMS = [
     ("adm_test_menu", "🧪 مدیریت کانفیگ تست", "adm_test_menu"),
     ("adm_cleanup_settings", "🧹 پاکسازی خودکار منقضی‌ها", "adm_cleanup_settings"),
     ("adm_forcejoin_menu", "📢 عضویت اجباری در کانال", "adm_forcejoin_menu"),
+    ("adm_service_alert_channel", "📣 کانال اعلان حذف/اتمام کانفیگ", "adm_service_alert_channel"),
     ("adm_pending_orders", "🧾 سفارش‌های در انتظار", "adm_pending_orders"),
+    ("adm_order_surveys", "🗳 نظرسنجی سفارش‌ها", "adm_order_surveys"),
     ("adm_tickets_menu", "🎫 تیکت‌های پشتیبانی", "adm_tickets_menu"),
     ("adm_ticket_departments", "🧩 دپارتمان‌های پشتیبانی", "adm_ticket_departments"),
     ("adm_pending_topups", "👛 درخواست‌های شارژ کیف پول", "adm_pending_topups"),
@@ -1073,6 +1210,7 @@ ADMIN_PANEL_ITEMS = [
     ("adm_renewal_pricing", "💳 قیمت‌گذاری تمدید حجم/زمان", "adm_renewal_pricing"),
     ("adm_delivery_settings", "📤 تنظیمات ارسال کانفیگ", "adm_delivery_settings"),
     ("adm_referral_settings", "🤝 تنظیمات زیرمجموعه‌گیری", "adm_referral_settings"),
+    ("adm_signup_gift_settings", "🎁 هدیه‌ی عضویت", "adm_signup_gift_settings"),
     ("adm_resellers_menu", "🏪 مدیریت بات‌های نمایندگی", "adm_resellers_menu"),
     ("adm_credit_resellers_menu", "💳 نمایندگی حجمی (اعتبار)", "adm_credit_resellers_menu"),
     ("adm_commission_resellers_menu", "💼 نمایندگی کمیسیونی", "adm_commission_resellers_menu"),
@@ -1091,8 +1229,12 @@ ADMIN_PANEL_ITEMS = [
     ("adm_custom_gateways", "💠 درگاه‌های پرداخت سفارشی (فعال/غیرفعال)", "adm_custom_gateways"),
     ("adm_min_amount_settings", "🧮 حداقل مبلغ پرداخت‌ها", "adm_min_amount_settings"),
     ("adm_wallet_paymethods", "👛 روش‌های پرداخت شارژ کیف پول", "adm_wallet_paymethods"),
+    ("adm_bulk_wallet_deduct", "➖ کاهش گروهی موجودی کیف پول", "adm_bulk_wallet_deduct"),
+    ("adm_bulk_wallet_credit", "➕ افزایش گروهی موجودی و اعلان", "adm_bulk_wallet_credit"),
     ("adm_cc_paymethods", "🛠 روش‌های پرداخت کانفیگ شخصی", "adm_cc_paymethods"),
     ("adm_edit_welcome", "📝 ویرایش پیام خوش‌آمد", "adm_edit_welcome"),
+    ("adm_edit_tutorial", "🎓 بخش آموزشی (متن/عکس/ویدیو)", "adm_edit_tutorial"),
+    ("adm_tutorial_devices", "📚 آموزش اتصال به‌تفکیک دستگاه", "adm_tutorial_devices"),
     ("adm_admins_menu", "👤 مدیریت ادمین‌ها", "adm_admins_menu"),
     ("adm_broadcast", "📢 پیام همگانی", "adm_broadcast"),
     ("adm_deeplink_tools", "🔗 دیپ‌لینک و پست کانال", "adm_deeplink_tools"),
@@ -1129,6 +1271,7 @@ def _styled_inline(db, text: str, callback_data: str, style_key: str) -> InlineK
 ADMIN_PANEL_CATEGORIES = [
     ("daily", "📋 کارهای روزانه", [
         "adm_pending_orders",
+        "adm_order_surveys",
         "adm_tickets_menu",
         "adm_pending_topups",
         "adm_crypto_payments",
@@ -1145,6 +1288,7 @@ ADMIN_PANEL_CATEGORIES = [
         "adm_random_cfg",
         "adm_test_menu",
         "adm_cleanup_settings",
+        "adm_service_alert_channel",
         "adm_custom_config_settings",
         "adm_delivery_settings",
         "adm_renewal_pricing",
@@ -1162,6 +1306,7 @@ ADMIN_PANEL_CATEGORIES = [
         "adm_cashback_settings",
         "adm_bulk_gift",
         "adm_referral_settings",
+        "adm_signup_gift_settings",
         "adm_broadcast",
         "adm_deeplink_tools",
         "adm_forcejoin_menu",
@@ -1180,6 +1325,8 @@ ADMIN_PANEL_CATEGORIES = [
         "adm_min_amount_settings",
         "adm_wallet_paymethods",
         "adm_cc_paymethods",
+        "adm_bulk_wallet_deduct",
+        "adm_bulk_wallet_credit",
     ]),
     ("alerts", "🔔 یادآوری‌ها و هشدارها", [
         "adm_renewal_settings",
@@ -1198,6 +1345,8 @@ ADMIN_PANEL_CATEGORIES = [
         "adm_edit_buttons",
         "adm_main_menu_settings",
         "adm_edit_welcome",
+        "adm_edit_tutorial",
+        "adm_tutorial_devices",
         "adm_panel_colors_menu",
         "adm_buyflow_colors_menu",
     ]),
@@ -1444,6 +1593,21 @@ def admin_restore_full_waiting_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def xui_restore_waiting_kb(server_id: int) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="❌ انصراف", callback_data=f"adm_xui_restore_cancel_wait:{server_id}")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def xui_restore_confirm_kb(server_id: int) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="✅ بله، دیتابیس پنل جایگزین شود", callback_data=f"adm_xui_restore_confirm:{server_id}")],
+        [InlineKeyboardButton(text="❌ انصراف", callback_data=f"adm_xui_restore_cancel:{server_id}")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def admin_temp_message_target_kb() -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="👤 به خودم", callback_data="adm_tempmsg_target:self")],
@@ -1474,17 +1638,73 @@ def delivery_settings_kb(db) -> InlineKeyboardMarkup:
     (برای هر سه مسیر تحویل: بانک کانفیگ، محصول متصل به پنل، ساخت کانفیگ شخصی، و کانفیگ تست)."""
     sub_link_on = db.get_setting("deliver_sub_link_enabled", "1") != "0"
     individual_on = db.get_setting("deliver_individual_configs_enabled", "1") != "0"
+    post_text_set = bool((db.get_setting("post_delivery_custom_text", "") or "").strip())
     sub_link_text = "✅ ارسال لینک اشتراک: فعال" if sub_link_on else "❌ ارسال لینک اشتراک: غیرفعال"
     individual_text = "✅ ارسال کانفیگ‌های تکی: فعال" if individual_on else "❌ ارسال کانفیگ‌های تکی: غیرفعال"
+    post_text_label = "📝 متن دلخواه بعد از ارسال کانفیگ: تنظیم‌شده" if post_text_set else "📝 متن دلخواه بعد از ارسال کانفیگ: تنظیم‌نشده"
+    import config_delivery as _cd
+    if not _cd.has_qr_background():
+        qr_bg_label = "🖼 پس‌زمینه QR: تنظیم‌نشده"
+    elif _cd.qr_background_enabled(db):
+        qr_bg_label = "🖼 پس‌زمینه QR: فعال"
+    else:
+        qr_bg_label = "🖼 پس‌زمینه QR: تنظیم‌شده (غیرفعال)"
     rows = [
         [InlineKeyboardButton(text=sub_link_text, callback_data="adm_deliver_sublink_toggle")],
         [InlineKeyboardButton(text=individual_text, callback_data="adm_deliver_individual_toggle")],
+        [InlineKeyboardButton(text=post_text_label, callback_data="adm_edit_post_delivery_text")],
+        [InlineKeyboardButton(text=qr_bg_label, callback_data="adm_qr_background_menu")],
         [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:products")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_broadcast_duration_kb() -> InlineKeyboardMarkup:
+def qr_background_menu_kb(db) -> InlineKeyboardMarkup:
+    """منوی مدیریت تصویر پس‌زمینه‌ی کد QR."""
+    import config_delivery as _cd
+    has_bg = _cd.has_qr_background()
+    rows = [
+        [InlineKeyboardButton(
+            text="🖼 آپلود/تعویض تصویر پس‌زمینه",
+            callback_data="adm_qr_background_upload",
+        )],
+    ]
+    if has_bg:
+        enabled = _cd.qr_background_enabled(db)
+        toggle_text = "❌ غیرفعال‌کردن پس‌زمینه" if enabled else "✅ فعال‌کردن پس‌زمینه"
+        rows.append([InlineKeyboardButton(text=toggle_text, callback_data="adm_qr_background_toggle")])
+        rows.append([InlineKeyboardButton(text="👁 پیش‌نمایش", callback_data="adm_qr_background_preview")])
+        rows.append([InlineKeyboardButton(text="🗑 حذف تصویر پس‌زمینه", callback_data="adm_qr_background_remove")])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_delivery_settings")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_broadcast_target_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 همه‌ی کاربران", callback_data="adm_broadcast_target:all")],
+        [InlineKeyboardButton(text="🖥 کاربران یک سرور خاص", callback_data="adm_broadcast_target:server")],
+        [InlineKeyboardButton(text="🚫 کاربران بدون کانفیگ", callback_data="adm_broadcast_target:no_config")],
+        [InlineKeyboardButton(text="⛔️ کاربران دارای کانفیگ غیرفعال", callback_data="adm_broadcast_target:inactive_config")],
+        [InlineKeyboardButton(text="📆 کاربران بدون خرید در N روز اخیر", callback_data="adm_broadcast_target:no_purchase")],
+        [InlineKeyboardButton(text="🚪 خارج‌شده از کانال اجباری (ولی عضو ربات)", callback_data="adm_broadcast_target:left_channel")],
+        [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:marketing")],
+    ])
+
+
+def admin_broadcast_server_select_kb(db) -> InlineKeyboardMarkup:
+    servers = db.get_panel_servers()
+    rows = []
+    for s in servers:
+        icon = "🟢" if s["is_active"] else "🔴"
+        rows.append([InlineKeyboardButton(
+            text=f"{icon} {s['name']}", callback_data=f"adm_broadcast_server:{s['id']}",
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_broadcast")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_broadcast_duration_kb(pin_after_send: bool = False) -> InlineKeyboardMarkup:
+    pin_label = "📌 پین بعد از ارسال: روشن ✅" if pin_after_send else "📌 پین بعد از ارسال: خاموش"
     rows = [
         [InlineKeyboardButton(text="🚫 بدون حذف خودکار", callback_data="adm_broadcast_dur:0")],
         [
@@ -1496,8 +1716,10 @@ def admin_broadcast_duration_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="۳ روز", callback_data="adm_broadcast_dur:259200"),
         ],
         [InlineKeyboardButton(text="✏️ مدت دلخواه (دقیقه)", callback_data="adm_broadcast_dur:custom")],
+        [InlineKeyboardButton(text=pin_label, callback_data="adm_broadcast_toggle_pin")],
         [InlineKeyboardButton(text="⏰ زمان‌بندی ارسال (فقط متن)", callback_data="adm_broadcast_schedule")],
-        [InlineKeyboardButton(text="❌ انصراف", callback_data="adm_broadcast")],
+        [InlineKeyboardButton(text="✏️ ویرایش متن/عکس", callback_data="adm_broadcast_edit")],
+        [InlineKeyboardButton(text="❌ لغو ارسال", callback_data="adm_broadcast_cancel")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1590,6 +1812,9 @@ def admin_stats_period_kb(active_days: int = 7) -> InlineKeyboardMarkup:
             for d, label in periods[2:]
         ],
         [InlineKeyboardButton(text="📈 آمار پیشرفته (روند، درگاه‌ها، نماینده‌ها، قیف تبدیل)", callback_data="adm_stats_adv:7")],
+        [InlineKeyboardButton(text="👥 آمار دقیق کاربران ربات", callback_data="adm_stats_users_breakdown")],
+        [InlineKeyboardButton(text="🏆 برترین خریداران", callback_data="adm_stats_top_buyers")],
+        [InlineKeyboardButton(text="🔍 آمار کامل یک کاربر", callback_data="adm_stats_user")],
         [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:management")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -1621,6 +1846,23 @@ def admin_back_kb(callback_data="adm_back_panel") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="⬅️ بازگشت به پنل مدیریت", callback_data=callback_data)]]
     )
+
+
+def user_full_stats_kb(tg_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📦 لیست کامل کانفیگ‌های این کاربر", callback_data=f"adm_user_configs:{tg_id}")],
+        [InlineKeyboardButton(text="⏻ فعال/غیرفعال کردن همه‌ی کانفیگ‌های این کاربر", callback_data=f"adm_user_toggle_all:{tg_id}")],
+        [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_stats")],
+    ])
+
+
+def user_toggle_all_confirm_kb(tg_id: int, new_enabled: bool) -> InlineKeyboardMarkup:
+    flag = "1" if new_enabled else "0"
+    label = "✅ بله، همه را فعال کن" if new_enabled else "⚠️ بله، همه را غیرفعال کن"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=label, callback_data=f"adm_user_toggle_all_go:{tg_id}:{flag}")],
+        [InlineKeyboardButton(text="❌ انصراف", callback_data=f"adm_user_configs:{tg_id}")],
+    ])
 
 
 def deeplink_tools_menu_kb() -> InlineKeyboardMarkup:
@@ -1772,6 +2014,40 @@ def admin_bulk_price_undo_kb(logs):
     rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:products")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+def admin_bulk_wallet_status_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 همه‌ی کاربران", callback_data="adm_bwd_status:all")],
+        [InlineKeyboardButton(text="🟢 دارای سرویس فعال", callback_data="adm_bwd_status:active"),
+         InlineKeyboardButton(text="🔴 سرویس منقضی", callback_data="adm_bwd_status:expired")],
+        [InlineKeyboardButton(text="⛔️ بلاک‌شده", callback_data="adm_bwd_status:blocked")],
+        [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:finance")],
+    ])
+
+
+def admin_bulk_wallet_usertype_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 همه", callback_data="adm_bwd_utype:all")],
+        [InlineKeyboardButton(text="🏪 فقط نماینده‌ها", callback_data="adm_bwd_utype:reseller"),
+         InlineKeyboardButton(text="🙍 فقط کاربران عادی", callback_data="adm_bwd_utype:normal")],
+        [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_bulk_wallet_deduct")],
+    ])
+
+
+def admin_bulk_wallet_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ اعمال کاهش", callback_data="adm_bwd_confirm"),
+         InlineKeyboardButton(text="❌ لغو", callback_data="adm_bwd_cancel")],
+    ])
+
+
+def admin_bulk_wallet_credit_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ افزایش موجودی و ارسال اعلان", callback_data="adm_bwc_confirm"),
+         InlineKeyboardButton(text="❌ لغو", callback_data="adm_bwc_cancel")],
+    ])
+
+
+
 def admin_products_categories_kb(categories, prefix="adm_prod_cat") -> InlineKeyboardMarkup:
     rows = []
     for cat in categories:
@@ -1812,6 +2088,10 @@ def admin_products_list_kb(db, products) -> InlineKeyboardMarkup:
             if p["provision_server_id"]:
                 edit_row.insert(0, InlineKeyboardButton(text="🔌 تغییر پنل/اینباند", callback_data=f"adm_prod_srv:{p['id']}"))
             rows.append(edit_row)
+            extra = p["extra_user_price"] if "extra_user_price" in p.keys() else 0
+            max_users = p["max_users"] if "max_users" in p.keys() else 0
+            users_label = f"👥 کاربر همزمان: تا {max_users} (+{extra:,}ت)" if extra and max_users else "👥 محدودیت کاربر: غیرفعال"
+            rows.append([InlineKeyboardButton(text=users_label, callback_data=f"adm_prod_users:{p['id']}")])
     rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_products")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -2034,13 +2314,28 @@ def admin_cleanup_settings_kb(db) -> InlineKeyboardMarkup:
     tests = db.get_setting("test_delete_days", "0")
     warning = db.get_setting("expired_cleanup_warning_days", "3")
     dry = db.get_setting("expired_cleanup_dry_run", "1") == "1"
+    inactive_time = db.get_setting("inactive_config_delete_time", "") or "خاموش"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"📦 مهلت حذف سرویس: {expired} روز (۰=خاموش)", callback_data="adm_cleanup_expired")],
         [InlineKeyboardButton(text=f"🧪 مهلت حذف تست: {tests} روز (۰=خاموش)", callback_data="adm_cleanup_test")],
         [InlineKeyboardButton(text=f"⚠️ هشدار قبل از انقضا: {warning} روز", callback_data="adm_cleanup_warning")],
         [InlineKeyboardButton(text=("🟢 dry-run روشن" if dry else "🔴 dry-run خاموش"), callback_data="adm_cleanup_dryrun")],
+        [InlineKeyboardButton(text=f"🕐 حذف کانفیگ‌های غیرفعال: {inactive_time}", callback_data="adm_cleanup_inactive_time")],
+        [InlineKeyboardButton(text="🗑 پاکسازی کانفیگ‌های یتیم (F147)", callback_data="adm_cleanup_orphans")],
         [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:products")],
     ])
+
+
+def admin_service_alert_channel_kb(db) -> InlineKeyboardMarkup:
+    channel = (db.get_setting("service_alert_channel", "") or "").strip() or "ثبت نشده"
+    rows = [
+        [InlineKeyboardButton(text=f"📣 کانال فعلی: {channel}", callback_data="noop")],
+        [InlineKeyboardButton(text="✏️ تنظیم / تغییر کانال", callback_data="adm_service_alert_set_channel")],
+    ]
+    if channel != "ثبت نشده":
+        rows.append([InlineKeyboardButton(text="🗑 حذف کانال (غیرفعال)", callback_data="adm_service_alert_clear_channel")])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:products")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def test_plan_view_kb(db, plan) -> InlineKeyboardMarkup:
@@ -2230,6 +2525,25 @@ def pending_orders_kb(orders) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+
+
+def order_survey_kb(survey_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"{n}⭐", callback_data=f"svy:{survey_id}:{n}") for n in range(1, 6)
+    ]])
+
+
+def order_surveys_list_kb(orders, surveys) -> InlineKeyboardMarkup:
+    rows = []
+    for o in orders:
+        s = surveys.get(o["id"])
+        state = f"⭐{s['rating']}" if s and s["rating"] else ("✉️ ارسال‌شده" if s else "🗳 ارسال")
+        rows.append([InlineKeyboardButton(
+            text=f"#{o['id']} · کاربر {o['user_id']} · {state}", callback_data=f"adm_svy_send:{o['id']}",
+        )])
+    rows.append([InlineKeyboardButton(text="📊 نتایج به تفکیک پنل", callback_data="adm_svy_results")])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:daily")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def crypto_invoices_kb(invoices) -> InlineKeyboardMarkup:
@@ -2558,6 +2872,21 @@ def discount_scope_products_kb(products) -> InlineKeyboardMarkup:
 # تنظیمات زیرمجموعه‌گیری
 # ---------------------------------------------------------------------------
 
+def referral_share_kb(link: str) -> InlineKeyboardMarkup:
+    """دکمه اشتراک‌گذاری لینک رفرال از طریق پنجره Share خود تلگرام."""
+    from urllib.parse import quote
+
+    share_url = (
+        "https://t.me/share/url?url="
+        + quote(link, safe="")
+        + "&text="
+        + quote("🤝 برای عضویت در فروشگاه از لینک زیر استفاده کنید:", safe="")
+    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 اشتراک‌گذاری لینک", url=share_url)]
+    ])
+
+
 def referral_settings_kb(db) -> InlineKeyboardMarkup:
     # --- حالت ۱: پورسانت درصدی از اولین خرید هر زیرمجموعه ---
     enabled = db.get_setting("referral_enabled", "1") == "1"
@@ -2565,6 +2894,10 @@ def referral_settings_kb(db) -> InlineKeyboardMarkup:
     percent = db.get_setting("referral_percent", "10")
     commission_max = int(db.get_setting("referral_commission_max_count", "0") or 0)
     commission_max_text = f"{commission_max} نفر" if commission_max > 0 else "نامحدود"
+    min_purchase = int(db.get_setting("referral_min_purchase_amount", "0") or 0)
+    min_purchase_text = f"{min_purchase:,} تومان" if min_purchase > 0 else "بدون حداقل"
+    min_purchase_strict = db.get_setting("referral_min_purchase_strict", "0") == "1"
+    min_purchase_strict_text = "🔴 حالت سخت‌گیرانه (خرید کم مصرف شود)" if min_purchase_strict else "🟢 حالت منتظر بمان (تا خرید بعدی)"
 
     # --- حالت ۲: محصول رایگان با رسیدن به تعداد دعوت مشخص ---
     fc_enabled = db.get_setting("referral_free_config_enabled", "0") == "1"
@@ -2583,6 +2916,11 @@ def referral_settings_kb(db) -> InlineKeyboardMarkup:
     ib_max = int(db.get_setting("referral_invite_bonus_max_count", "0") or 0)
     ib_max_text = f"{ib_max} نفر" if ib_max > 0 else "نامحدود"
 
+    # --- حالت ۴ (قابلیت ۶۷): پورسانت درصدی روی هر تمدید سرویس زیرمجموعه ---
+    renewal_percent = db.get_setting("referral_renewal_percent", "0")
+    renewal_max = int(db.get_setting("referral_renewal_max_count", "0") or 0)
+    renewal_max_text = f"{renewal_max} تمدید" if renewal_max > 0 else "نامحدود"
+
     rows = [
         [InlineKeyboardButton(text="① پورسانت درصدی از خرید زیرمجموعه", callback_data="noop")],
         [InlineKeyboardButton(text=f"درصد پورسانت: {percent}% | سقف: {commission_max_text}", callback_data="noop")],
@@ -2592,6 +2930,9 @@ def referral_settings_kb(db) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📊 درصد سطح ۲ و ۳", callback_data="adm_referral_multilevel_info")],
         [InlineKeyboardButton(text="✏️ تنظیم درصد سطح ۲ و ۳", callback_data="adm_referral_multilevel_edit")],
         [InlineKeyboardButton(text="✏️ تغییر سقف تعداد نفرات (۰=نامحدود)", callback_data="adm_referral_commission_max_edit")],
+        [InlineKeyboardButton(text=f"حداقل مبلغ خرید برای پورسانت: {min_purchase_text}", callback_data="noop")],
+        [InlineKeyboardButton(text="✏️ تغییر حداقل مبلغ خرید (۰=بدون حداقل)", callback_data="adm_referral_min_purchase_edit")],
+        [InlineKeyboardButton(text=min_purchase_strict_text, callback_data="adm_referral_min_purchase_strict_toggle")],
 
         [InlineKeyboardButton(text="② کانفیگ رایگان با تعداد دعوت مشخص", callback_data="noop")],
         [InlineKeyboardButton(text=f"آستانه: {fc_threshold} نفر | محصول: {fc_product_name}", callback_data="noop")],
@@ -2604,6 +2945,11 @@ def referral_settings_kb(db) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=ib_toggle_text, callback_data="adm_referral_invitebonus_toggle")],
         [InlineKeyboardButton(text="✏️ تغییر مبلغ شارژ", callback_data="adm_referral_invitebonus_amount_edit")],
         [InlineKeyboardButton(text="✏️ تغییر سقف تعداد نفرات (۰=نامحدود)", callback_data="adm_referral_invitebonus_max_edit")],
+
+        [InlineKeyboardButton(text="④ پورسانت درصدی روی تمدید سرویس زیرمجموعه", callback_data="noop")],
+        [InlineKeyboardButton(text=f"درصد پورسانت تمدید: {renewal_percent}% (۰=غیرفعال) | سقف: {renewal_max_text}", callback_data="noop")],
+        [InlineKeyboardButton(text="✏️ تغییر درصد پورسانت تمدید", callback_data="adm_referral_renewal_percent_edit")],
+        [InlineKeyboardButton(text="✏️ تغییر سقف تعداد تمدیدها (۰=نامحدود)", callback_data="adm_referral_renewal_max_edit")],
 
         [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:marketing")],
     ]
@@ -2618,6 +2964,21 @@ def referral_freeconfig_product_kb(db) -> InlineKeyboardMarkup:
             text=f"{p['name']} ({p['category_name']})", callback_data=f"adm_referral_freeconfig_setprod:{p['id']}"
         )])
     rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_referral_settings")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def signup_gift_settings_kb(db) -> InlineKeyboardMarkup:
+    enabled = db.get_setting("signup_gift_enabled", "0") == "1"
+    toggle_text = "🔴 غیرفعال کردن هدیه‌ی عضویت" if enabled else "🟢 فعال کردن هدیه‌ی عضویت"
+    amount = db.get_setting("signup_gift_amount", "0")
+    delay_days = db.get_setting("signup_gift_delay_days", "3")
+    rows = [
+        [InlineKeyboardButton(text=f"مبلغ: {amount} تومان | بعد از {delay_days} روز بدون خرید", callback_data="noop")],
+        [InlineKeyboardButton(text=toggle_text, callback_data="adm_signup_gift_toggle")],
+        [InlineKeyboardButton(text="✏️ تغییر مبلغ هدیه", callback_data="adm_signup_gift_amount_edit")],
+        [InlineKeyboardButton(text="✏️ تغییر مدت انتظار (روز)", callback_data="adm_signup_gift_delay_edit")],
+        [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:marketing")],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2750,6 +3111,7 @@ def stock_alert_settings_kb(db) -> InlineKeyboardMarkup:
 # حداقل مبلغ یک درگاه.
 MIN_AMOUNT_SETTINGS_ITEMS = [
     ("min_amount_wallet_topup", "👛 حداقل مبلغ شارژ کیف پول"),
+    ("max_wallet_balance", "🧢 سقف موجودی کیف پول"),
     ("min_amount_card", "💳 حداقل مبلغ کارت‌به‌کارت (دستی)"),
     ("min_amount_abangateway", "💳 حداقل مبلغ آبان گیت وی"),
     ("min_amount_blupal", "💳 حداقل مبلغ بلوپال"),
@@ -3008,8 +3370,12 @@ def panel_server_view_kb(server) -> InlineKeyboardMarkup:
         rows += [
             [InlineKeyboardButton(text="➕ ساخت Inbound جدید", callback_data=f"adm_xui_inb_new:{server['id']}")],
             [InlineKeyboardButton(text="💾 بکاپ پنل", callback_data=f"adm_panel_server_backup:{server['id']}")],
+            [InlineKeyboardButton(text="♻️ بازیابی پنل از بکاپ", callback_data=f"adm_panel_server_restore:{server['id']}")],
+            [InlineKeyboardButton(text="📊 آمار کامل پنل", callback_data=f"adm_panel_server_stats:{server['id']}")],
         ]
+    proxy_text = f"🧦 پروکسی ساکس: {'فعال' if server['socks_proxy'] else 'خاموش'}"
     rows += [
+        [InlineKeyboardButton(text=proxy_text, callback_data=f"adm_panel_server_socks:{server['id']}")],
         [InlineKeyboardButton(text=custom_text, callback_data=f"adm_panel_server_usage:custom:{server['id']}")],
         [InlineKeyboardButton(text=test_text, callback_data=f"adm_panel_server_usage:test:{server['id']}")],
         [InlineKeyboardButton(text=reseller_text, callback_data=f"adm_panel_server_usage:reseller:{server['id']}")],
@@ -3079,14 +3445,15 @@ def pricing_tiers_kb(db) -> InlineKeyboardMarkup:
 # کیف پول
 # ---------------------------------------------------------------------------
 
-def wallet_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="➕ شارژ کیف پول", callback_data="start_topup")],
-            [InlineKeyboardButton(text="🎁 استفاده از گیفت‌کد", callback_data="wallet_gift_code")],
-            [InlineKeyboardButton(text="💸 انتقال موجودی به کاربر دیگر", callback_data="wallet_transfer")],
-        ]
-    )
+def wallet_menu_kb(db=None) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="➕ شارژ کیف پول", callback_data="start_topup")],
+        [InlineKeyboardButton(text="🎁 استفاده از گیفت‌کد", callback_data="wallet_gift_code")],
+    ]
+    if db is None or db.get_setting("wallet_show_transfer", "1") == "1":
+        rows.append([InlineKeyboardButton(text="💸 انتقال موجودی به کاربر دیگر", callback_data="wallet_transfer")])
+    rows.append([InlineKeyboardButton(text="📜 تاریخچه تراکنش‌ها", callback_data="wallet_history")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def wallet_gift_codes_kb(codes) -> InlineKeyboardMarkup:
@@ -3175,8 +3542,10 @@ def reseller_membership_tiers_kb(tiers) -> InlineKeyboardMarkup:
         fee = int(t["membership_fee_toman"] or 0)
         days = t["duration_days"]
         duration = "دائمی" if days is None else f"{days} روز"
+        cap = int(t["credit_limit_toman"] or 0)
+        cap_text = f" | سقف اعتبار {cap:,}" if cap else ""
         rows.append([InlineKeyboardButton(
-            text=f"{t['icon']} {t['title']} | {fee:,} تومان | {duration}",
+            text=f"{t['icon']} {t['title']} | {fee:,} تومان | {duration}{cap_text}",
             callback_data=f"adm_rmem_edit:{t['code']}",
         )])
     rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:resellers")])
@@ -3422,6 +3791,8 @@ def credit_reseller_view_kb(user_tg_id: int, is_reseller: bool) -> InlineKeyboar
     rows = [
         [InlineKeyboardButton(text=toggle_text, callback_data=f"adm_cres_toggle:{user_tg_id}")],
         [InlineKeyboardButton(text="➕/➖ تغییر اعتبار (گیگ)", callback_data=f"adm_cres_credit:{user_tg_id}")],
+        [InlineKeyboardButton(text="💳 سقف اعتبار پس‌پرداخت (تومان)", callback_data=f"adm_cres_limit:{user_tg_id}")],
+        [InlineKeyboardButton(text="📜 لاگ کیف پول", callback_data=f"adm_cres_wlog:{user_tg_id}")],
         [InlineKeyboardButton(text="🔗 تعیین پنل اختصاصی", callback_data=f"adm_cres_panel:{user_tg_id}")],
         [InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_credit_resellers_menu")],
     ]

@@ -20,6 +20,7 @@ import string
 from config import DB_PATH as MAIN_DB_PATH
 from database import Database
 from panel_providers import get_provider, PanelError, PanelUsernameTakenError
+from user_limit import order_user_limit, provider_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,8 @@ async def provision_auto_config(
         raise ProvisionError("برای این محصول هیچ پنل فعالی برای ساخت کانفیگ نمایندگی پیدا نشد.")
 
     provider = get_provider(server)
+    order = local_db.get_order(order_id) if order_id is not None else None
+    extra_kwargs = provider_kwargs(provider, order_user_limit(order))
     built = []
 
     async def _rollback_built():
@@ -136,7 +139,7 @@ async def provision_auto_config(
             for _try in range(5):
                 candidate = _random_username(username_prefix)
                 try:
-                    result = await provider.create_user(candidate, volume_gb, duration_days)
+                    result = await provider.create_user(candidate, volume_gb, duration_days, **extra_kwargs)
                     username = candidate
                     break
                 except PanelUsernameTakenError:
@@ -149,6 +152,7 @@ async def provision_auto_config(
                 "subscription_url": result.subscription_url,
                 "volume_gb": volume_gb,
                 "duration_days": duration_days,
+                "user_limit": extra_kwargs.get("user_limit"),
             })
     except ProvisionError:
         raise
@@ -206,7 +210,7 @@ async def provision_auto_config(
                     local_db.add_custom_config(
                         user_id, local_panel_id, item["username"], item["volume_gb"], item["duration_days"],
                         item["subscription_url"], order_id=order_id, source=source,
-                        product_id=product_id_for_config,
+                        product_id=product_id_for_config, user_limit=item.get("user_limit"),
                     )
                 except Exception:
                     # این دیگر یک شکست ساختاری قابل‌پیش‌بینی (مثل FK قبلی) نیست -

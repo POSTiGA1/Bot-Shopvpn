@@ -14,6 +14,7 @@ import random
 import string
 
 from panel_providers import get_provider, PanelError, PanelUsernameTakenError
+from user_limit import order_user_limit, provider_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ async def provision_direct(db, product, quantity: int = 1, user_id: int = None, 
     order = db.get_order(order_id) if order_id is not None else None
     if order and order["config_name"]:
         planned = planned_usernames(order["config_name"], quantity)
+    extra_kwargs = provider_kwargs(provider, order_user_limit(order))
     built = []
 
     async def _rollback_built():
@@ -105,7 +107,7 @@ async def provision_direct(db, product, quantity: int = 1, user_id: int = None, 
                 if db.is_custom_username_taken(candidate):
                     continue
                 try:
-                    result = await provider.create_user(candidate, volume_gb, duration_days)
+                    result = await provider.create_user(candidate, volume_gb, duration_days, **extra_kwargs)
                     username = candidate
                     break
                 except PanelUsernameTakenError:
@@ -118,6 +120,7 @@ async def provision_direct(db, product, quantity: int = 1, user_id: int = None, 
                 "subscription_url": result.subscription_url,
                 "volume_gb": volume_gb,
                 "duration_days": duration_days,
+                "user_limit": extra_kwargs.get("user_limit"),
             })
     except ProvisionError:
         raise
@@ -131,6 +134,7 @@ async def provision_direct(db, product, quantity: int = 1, user_id: int = None, 
                 db.add_custom_config(
                     user_id, server["id"], item["username"], item["volume_gb"], item["duration_days"],
                     item["subscription_url"], order_id=order_id, source="direct_product",
+                    user_limit=item.get("user_limit"),
                 )
             except Exception:
                 # مسیر خودِ ساخت روی پنل قبلاً موفق شده (والا اصلاً به این بلوک
