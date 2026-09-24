@@ -6,7 +6,7 @@
 (از طریق admin_panel.telegram_notify) کار می‌کند.
 """
 
-from config_delivery import build_qr_bytes, build_delivery_caption, build_summary_text, _delivery_flags
+from config_delivery import build_qr_bytes, build_delivery_caption, build_summary_text, _delivery_flags, get_post_delivery_text
 from admin_panel.telegram_notify import send_message as tg_send, send_photo as tg_send_photo
 from config import BOT_TOKEN
 from sub_info import fetch_individual_links
@@ -61,7 +61,7 @@ async def deliver_config_to_user_web(
 
         sent = False
         try:
-            qr_bytes = build_qr_bytes(link)
+            qr_bytes = build_qr_bytes(link, db=db)
             sent = await tg_send_photo(bot_token, user_tg_id, qr_bytes, "config_qr.png", caption)
         except Exception:
             sent = False
@@ -82,3 +82,10 @@ async def deliver_config_to_user_web(
 
     if final_price is not None:
         await tg_send(bot_token, user_tg_id, build_summary_text(final_price, total))
+
+    post_text = get_post_delivery_text(db)
+    if post_text:
+        try:
+            await tg_send(bot_token, user_tg_id, post_text)
+        except Exception:
+            pass
