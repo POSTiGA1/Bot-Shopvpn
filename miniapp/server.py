@@ -2028,14 +2028,19 @@ async def api_wallet_abangateway_invoice(body: AbanGatewayWalletInvoiceRequest, 
 @app.post("/api/webhooks/abangateway")
 async def api_abangateway_webhook(request: Request, tenant: Tenant = Depends(get_tenant)):
     """
-    توجه مهم: مستندات رسمی آبان گیت وی قالب دقیق بدنه‌ی وب‌هوک (و امضای آن) را مشخص
-    نکرده است. بنابراین این هندلر به هیچ فیلدی از بدنه (مثل status) اعتماد نمی‌کند؛
-    فقط از آن برای پیدا کردن invoice_id استفاده می‌شود و سپس با کلید API خودمان
-    (که در بدنه‌ی وب‌هوک قابل جعل نیست) وضعیت واقعی از سمت آبان گیت وی استعلام و
-    verify می‌شود. abangateway_payment.try_verify_and_finalize منبع حقیقت است.
+    اگر «کلید مخفی وب‌هوک» تنظیم شده باشد، امضای X-Signature الزامی است. هندلر به هیچ
+    فیلدی از بدنه اعتماد نمی‌کند؛ وضعیت واقعی با کلید API از خود آبان گیت وی استعلام و
+    verify می‌شود (abangateway_payment.try_verify_and_finalize).
     """
+    raw_body = await request.body()
+    webhook_secret = tenant.db.get_setting("abangateway_webhook_secret", "")
+    if webhook_secret and not abangateway_payment.verify_webhook_signature(
+        raw_body, request.headers.get("X-Signature", ""), webhook_secret
+    ):
+        raise HTTPException(status_code=401, detail="امضای وب‌هوک نامعتبر است.")
+
     try:
-        body = await request.json()
+        body = json.loads(raw_body)
     except Exception:
         try:
             form = await request.form()
