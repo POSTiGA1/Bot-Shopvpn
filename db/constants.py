@@ -248,6 +248,8 @@ DEFAULT_SETTINGS = {
     "coin_convert_min": "1",
     "coin_convert_max": "0",
     "lottery_min_coins": "1",
+    "coin_expiry_days": "7",
+    "coin_wallet_expiry_days": "7",
     "btn_wheel": "🎡 گردونه شانس",
     # پرداخت کریپتو (Plisio)
     "crypto_payment_enabled": "0",

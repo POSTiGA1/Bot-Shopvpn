@@ -412,6 +412,7 @@ class UsersMixin:
         if user_tg_id == referrer_tg_id:
             return
         referral_points = self.get_score_points("referral")
+        coin_days = self.get_coin_settings()["expiry_days"]
         with self._get_conn() as conn:
             row = conn.execute("SELECT referred_by FROM users WHERE telegram_id=?", (user_tg_id,)).fetchone()
             if row and row["referred_by"] is None:
@@ -422,8 +423,8 @@ class UsersMixin:
                     cur = conn.execute(
                         "UPDATE users SET referred_by=? WHERE telegram_id=? AND referred_by IS NULL", (referrer_tg_id, user_tg_id)
                     )
-                    if cur.rowcount and referral_points > 0:
-                        conn.execute("UPDATE users SET score=COALESCE(score,0)+? WHERE telegram_id=?", (referral_points, referrer_tg_id))
+                    if cur.rowcount:
+                        self._grant_coins(conn, referrer_tg_id, referral_points, coin_days)
 
     # -------------------------------------------------------------------
     # نمایندگی با «لینک اختصاصی داخل بات اصلی» (بند ۳.۱ اسپک)

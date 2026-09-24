@@ -896,13 +896,14 @@ class CatalogMixin:
     def approve_custom_config_order(self, order_id: int) -> bool:
         """فقط اگر سفارش pending یا processing (بعد از claim_order) باشد اعمال می‌شود."""
         purchase_points = self.get_score_points("purchase")
+        coin_days = self.get_coin_settings()["expiry_days"]
         with self._get_conn() as conn:
             cur = conn.execute(
                 "UPDATE orders SET status='approved', updated_at=? WHERE id=? AND status IN ('pending','processing')",
                 (datetime.utcnow().isoformat(), order_id),
             )
             if cur.rowcount:
-                self._award_order_score(conn, order_id, purchase_points)
+                self._award_order_score(conn, order_id, purchase_points, coin_days)
             return cur.rowcount > 0
 
 

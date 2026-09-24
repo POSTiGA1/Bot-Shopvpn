@@ -1166,6 +1166,16 @@ class DatabaseBase:
                 "CREATE TABLE IF NOT EXISTS wallet_tx_label (user_id INTEGER PRIMARY KEY, kind TEXT, note TEXT)"
             )
             c.execute(
+                "CREATE TABLE IF NOT EXISTS coin_batches (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, "
+                "amount INTEGER NOT NULL, remaining INTEGER NOT NULL, created_at TEXT NOT NULL, expires_at TEXT)"
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_coin_batches_user ON coin_batches(user_id, remaining)")
+            c.execute(
+                "CREATE TABLE IF NOT EXISTS coin_wallet_credits (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, "
+                "amount INTEGER NOT NULL, remaining INTEGER NOT NULL, tx_id INTEGER NOT NULL, created_at TEXT NOT NULL, expires_at TEXT)"
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_coin_wallet_credits_user ON coin_wallet_credits(user_id, remaining)")
+            c.execute(
                 "CREATE TRIGGER IF NOT EXISTS trg_wallet_transactions AFTER UPDATE OF referral_credit ON users "
                 "WHEN COALESCE(OLD.referral_credit,0) <> COALESCE(NEW.referral_credit,0) BEGIN "
                 "INSERT INTO wallet_transactions (user_id, delta, balance_before, balance_after, kind, note) "
@@ -1237,7 +1247,7 @@ class DatabaseBase:
         "card_to_card_cards", "card_to_card_invoices", "panel_servers", "panel_health", "panel_health_events", "report_topics",
         "custom_config_pricing_tiers", "custom_config_products",
         "custom_config_product_pricing_tiers", "custom_configs",
-        "custom_config_history", "location_change_log", "bulk_gift_jobs", "bulk_gift_items", "price_change_log", "lottery_log", "reseller_credit_log", "wallet_transactions", "wallet_tx_label", "reseller_requests",
+        "custom_config_history", "location_change_log", "bulk_gift_jobs", "bulk_gift_items", "price_change_log", "lottery_log", "reseller_credit_log", "wallet_transactions", "wallet_tx_label", "coin_batches", "coin_wallet_credits", "reseller_requests",
         "reseller_product_credit", "reseller_inline_commission_log", "reseller_tiers",
         "reseller_tier_qty_discounts", "reseller_tier_requests",
         "payment_webhook_logs", "web_push_subscriptions", "temp_messages", "order_surveys",
@@ -1308,6 +1318,7 @@ class DatabaseBase:
             ("users", "signup_gift_given", "INTEGER DEFAULT 0"),
             ("users", "score", "INTEGER DEFAULT 0"),
             ("users", "coin_mode", "TEXT DEFAULT 'wallet'"),
+            ("users", "coin_credit_synced_tx", "INTEGER DEFAULT 0"),
             ("panel_health", "last_alert", "TEXT"),
             ("orders", "status", "TEXT DEFAULT 'pending'"),
             ("orders", "base_price", "INTEGER"),

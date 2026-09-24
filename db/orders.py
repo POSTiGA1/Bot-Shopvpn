@@ -212,6 +212,7 @@ class OrdersMixin:
         now = datetime.utcnow().isoformat()
         percent = max(0, min(int(self.get_setting("renewal_cashback_percent", "0") or 0), 100))
         renewal_points = self.get_score_points("renewal")
+        coin_days = self.get_coin_settings()["expiry_days"]
         with self._get_conn() as conn:
             row = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
             if not row or not row["is_renewal"]:
@@ -235,8 +236,7 @@ class OrdersMixin:
                             "UPDATE users SET referral_credit=MAX(referral_credit + ?, MIN(referral_credit,0)) WHERE telegram_id=?",
                             (amount, row["user_id"]),
                         )
-            if renewal_points > 0:
-                conn.execute("UPDATE users SET score=COALESCE(score,0)+? WHERE telegram_id=?", (renewal_points, row["user_id"]))
+            self._grant_coins(conn, row["user_id"], renewal_points, coin_days)
             return True
 
 
@@ -361,6 +361,7 @@ class OrdersMixin:
         if isinstance(config_ids, int):
             config_ids = [config_ids]
         purchase_points = self.get_score_points("purchase")
+        coin_days = self.get_coin_settings()["expiry_days"]
         with self._get_conn() as conn:
             cur = conn.execute(
                 "UPDATE orders SET status='approved', config_id=?, updated_at=? WHERE id=? AND status IN ('pending','processing')",
@@ -372,7 +373,7 @@ class OrdersMixin:
                 "UPDATE configs SET order_id=? WHERE id=?",
                 [(order_id, cid) for cid in config_ids],
             )
-            self._award_order_score(conn, order_id, purchase_points)
+            self._award_order_score(conn, order_id, purchase_points, coin_days)
             return True
 
 
@@ -381,13 +382,14 @@ class OrdersMixin:
         استفاده از بانک کانفیگ ساخته می‌شود (بدون config_id).
         فقط اگر سفارش pending یا processing (بعد از claim_order) باشد اعمال می‌شود."""
         purchase_points = self.get_score_points("purchase")
+        coin_days = self.get_coin_settings()["expiry_days"]
         with self._get_conn() as conn:
             cur = conn.execute(
                 "UPDATE orders SET status='approved', updated_at=? WHERE id=? AND status IN ('pending','processing')",
                 (datetime.utcnow().isoformat(), order_id),
             )
             if cur.rowcount:
-                self._award_order_score(conn, order_id, purchase_points)
+                self._award_order_score(conn, order_id, purchase_points, coin_days)
             return cur.rowcount > 0
 
 
@@ -1157,6 +1159,7 @@ class OrdersMixin:
 
     def get_wallet_status(self, user_tg_id: int) -> dict:
         """موجودی، سقف اعتبار پس‌پرداخت، بدهی فعلی و اعتبار قابل استفاده‌ی کاربر."""
+        self.expire_wallet_credits(user_tg_id)
         with self._get_conn() as conn:
             balance, limit = self._wallet_balance_and_limit(conn, user_tg_id)
         return {
@@ -1172,7 +1175,7 @@ class OrdersMixin:
         "gift_code": "گیفت‌کد", "cashback": "کش‌بک", "referral_reward": "پاداش زیرمجموعه",
         "referral_invite": "پاداش دعوت", "reseller_commission": "کارمزد نمایندگی", "membership_fee": "هزینه‌ی عضویت نمایندگی",
         "lottery": "قرعه‌کشی", "location_fee": "تغییر لوکیشن", "location_refund": "بازگشت هزینه‌ی تغییر لوکیشن",
-        "coin_convert": "تبدیل سکه", "admin_adjust": "تنظیم دستی ادمین", "admin_bulk_deduct": "کاهش گروهی توسط ادمین",
+        "coin_convert": "تبدیل سکه", "coin_expire": "انقضای موجودی حاصل از سکه", "admin_adjust": "تنظیم دستی ادمین", "admin_bulk_deduct": "کاهش گروهی توسط ادمین",
     }
 
 
@@ -1703,15 +1706,36 @@ class OrdersMixin:
     # -----------------------------------------------------------------------
 
 
+    @staticmethod
+    def _db_now() -> str:
+        return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+
+    @staticmethod
+    def _db_after_days(days: int):
+        if int(days) <= 0:
+            return None
+        return (datetime.utcnow() + timedelta(days=int(days))).strftime("%Y-%m-%d %H:%M:%S")
+
+
+    def _grant_coins(self, conn, user_tg_id: int, points: int, expiry_days: int):
+        """points و expiry_days باید قبل از باز کردن conn محاسبه شوند."""
+        if points <= 0:
+            return
+        conn.execute("UPDATE users SET score=COALESCE(score,0)+? WHERE telegram_id=?", (int(points), user_tg_id))
+        conn.execute(
+            "INSERT INTO coin_batches (user_id, amount, remaining, created_at, expires_at) VALUES (?,?,?,?,?)",
+            (user_tg_id, int(points), int(points), self._db_now(), self._db_after_days(expiry_days)),
+        )
+
+
     def add_score(self, user_tg_id: int, points: int = 1) -> int:
-        """افزایش اتمیک امتیاز؛ امتیاز منفی مجاز نیست."""
+        """افزایش اتمیک سکه؛ مقدار منفی مجاز نیست."""
         if self.get_setting("score_enabled", "1") != "1" or points <= 0:
             return self.get_user_score(user_tg_id)
+        expiry_days = self.get_coin_settings()["expiry_days"]
         with self._get_conn() as conn:
-            conn.execute(
-                "UPDATE users SET score=MAX(COALESCE(score,0)+?,0) WHERE telegram_id=?",
-                (int(points), user_tg_id),
-            )
+            self._grant_coins(conn, user_tg_id, int(points), expiry_days)
             row = conn.execute("SELECT COALESCE(score,0) score FROM users WHERE telegram_id=?", (user_tg_id,)).fetchone()
         return int(row["score"]) if row else 0
 
@@ -1727,13 +1751,12 @@ class OrdersMixin:
             return default
 
 
-    def _award_order_score(self, conn, order_id: int, points: int):
-        """points باید قبل از باز کردن conn محاسبه شود؛ get_setting داخل قفل _get_conn ممکن است deadlock بدهد."""
+    def _award_order_score(self, conn, order_id: int, points: int, expiry_days: int = 0):
+        """points و expiry_days باید قبل از باز کردن conn محاسبه شوند؛ get_setting داخل قفل _get_conn ممکن است deadlock بدهد."""
         if points > 0:
-            conn.execute(
-                "UPDATE users SET score=COALESCE(score,0)+? WHERE telegram_id=(SELECT user_id FROM orders WHERE id=?)",
-                (points, order_id),
-            )
+            row = conn.execute("SELECT user_id FROM orders WHERE id=?", (order_id,)).fetchone()
+            if row:
+                self._grant_coins(conn, row["user_id"], points, expiry_days)
 
 
     @staticmethod
@@ -1743,6 +1766,7 @@ class OrdersMixin:
 
 
     def get_score_leaderboard(self, limit: int = 10, include_agents: bool = True):
+        self.expire_coins()
         clause = self._lottery_participant_clause(include_agents, self.get_coin_settings()["lottery_min"])
         with self._get_conn() as conn:
             return conn.execute(
@@ -1753,6 +1777,7 @@ class OrdersMixin:
 
 
     def count_score_participants(self, include_agents: bool = True) -> int:
+        self.expire_coins()
         clause = self._lottery_participant_clause(include_agents, self.get_coin_settings()["lottery_min"])
         with self._get_conn() as conn:
             row = conn.execute(f"SELECT COUNT(*) c FROM users WHERE {clause}").fetchone()
@@ -1771,6 +1796,8 @@ class OrdersMixin:
             "convert_min": max(1, _int("coin_convert_min", 1)),
             "convert_max": _int("coin_convert_max", 0),
             "lottery_min": max(1, _int("lottery_min_coins", 1)),
+            "expiry_days": min(_int("coin_expiry_days", 7), 3650),
+            "wallet_expiry_days": min(_int("coin_wallet_expiry_days", 7), 3650),
         }
 
 
@@ -1800,6 +1827,9 @@ class OrdersMixin:
         if s["convert_max"] and coins > s["convert_max"]:
             raise ValueError(f"حداکثر تعداد سکه برای هر تبدیل {s['convert_max']:,} است.")
         amount = coins * s["value"]
+        self.expire_coins(user_tg_id)
+        self.expire_wallet_credits(user_tg_id)
+        expires_at = self._db_after_days(s["wallet_expiry_days"])
         with self._get_conn() as conn:
             row = conn.execute(
                 "SELECT COALESCE(score,0) score, COALESCE(coin_mode,'wallet') coin_mode FROM users WHERE telegram_id=?",
@@ -1817,12 +1847,163 @@ class OrdersMixin:
             )
             if cur.rowcount == 0:
                 raise ValueError("تعداد سکه‌های شما کافی نیست.")
+            self._consume_coin_batches(conn, user_tg_id, coins)
             with _wallet_tag(conn, user_tg_id, "coin_convert", f"تبدیل {coins:,} سکه"):
                 conn.execute(
                     "UPDATE users SET referral_credit=MAX(COALESCE(referral_credit,0)+?, MIN(COALESCE(referral_credit,0),0)) WHERE telegram_id=?",
                     (amount, user_tg_id),
                 )
-        return {"coins": coins, "amount": amount, "coins_left": int(row["score"]) - coins}
+            tx_id = conn.execute("SELECT COALESCE(MAX(id),0) FROM wallet_transactions WHERE user_id=?", (user_tg_id,)).fetchone()[0]
+            conn.execute(
+                "INSERT INTO coin_wallet_credits (user_id, amount, remaining, tx_id, created_at, expires_at) VALUES (?,?,?,?,?,?)",
+                (user_tg_id, amount, amount, int(tx_id), self._db_now(), expires_at),
+            )
+        return {"coins": coins, "amount": amount, "coins_left": int(row["score"]) - coins, "expires_at": expires_at}
+
+
+    @staticmethod
+    def _consume_coin_batches(conn, user_tg_id: int, coins: int):
+        need = int(coins)
+        rows = conn.execute(
+            "SELECT id, remaining FROM coin_batches WHERE user_id=? AND remaining>0 "
+            "ORDER BY (expires_at IS NULL), expires_at, id",
+            (user_tg_id,),
+        ).fetchall()
+        for r in rows:
+            if need <= 0:
+                break
+            take = min(need, int(r["remaining"]))
+            conn.execute("UPDATE coin_batches SET remaining=remaining-? WHERE id=?", (take, r["id"]))
+            need -= take
+
+
+    def expire_coins(self, user_tg_id: int = None) -> list:
+        """سکه‌های منقضی‌شده را کم می‌کند و [(user_id, تعداد)] برمی‌گرداند؛ سکه‌ی بدون دسته (قدیمی) از همین لحظه مهلت می‌گیرد."""
+        now = self._db_now()
+        expiry_days = self.get_coin_settings()["expiry_days"]
+        user_filter = "" if user_tg_id is None else "AND u.telegram_id=?"
+        params = () if user_tg_id is None else (user_tg_id,)
+        expired = []
+        with self._get_conn() as conn:
+            orphans = conn.execute(
+                "SELECT u.telegram_id uid, COALESCE(u.score,0) - COALESCE((SELECT SUM(b.remaining) FROM coin_batches b WHERE b.user_id=u.telegram_id),0) diff "
+                "FROM users u WHERE COALESCE(u.score,0)>0 "
+                "AND COALESCE(u.score,0) > COALESCE((SELECT SUM(b.remaining) FROM coin_batches b WHERE b.user_id=u.telegram_id),0) "
+                f"{user_filter}",
+                params,
+            ).fetchall()
+            for o in orphans:
+                conn.execute(
+                    "INSERT INTO coin_batches (user_id, amount, remaining, created_at, expires_at) VALUES (?,?,?,?,?)",
+                    (o["uid"], o["diff"], o["diff"], now, self._db_after_days(expiry_days)),
+                )
+            due_filter = "" if user_tg_id is None else "AND user_id=?"
+            due = conn.execute(
+                "SELECT id, user_id, remaining FROM coin_batches WHERE remaining>0 AND expires_at IS NOT NULL AND expires_at<=? "
+                f"{due_filter}",
+                (now,) + params,
+            ).fetchall()
+            totals = {}
+            for d in due:
+                totals[d["user_id"]] = totals.get(d["user_id"], 0) + int(d["remaining"])
+                conn.execute("UPDATE coin_batches SET remaining=0 WHERE id=?", (d["id"],))
+            for uid, total in totals.items():
+                conn.execute("UPDATE users SET score=MAX(COALESCE(score,0)-?,0) WHERE telegram_id=?", (total, uid))
+                expired.append((uid, total))
+        return expired
+
+
+    @staticmethod
+    def _sync_wallet_credits(conn, user_tg_id: int):
+        """برداشت‌های کیف پول را از دفتر تراکنش‌ها روی موجودی حاصل از سکه اعمال می‌کند؛ اول موجودی زودتر منقضی‌شونده خرج می‌شود."""
+        row = conn.execute("SELECT COALESCE(coin_credit_synced_tx,0) FROM users WHERE telegram_id=?", (user_tg_id,)).fetchone()
+        synced = int(row[0]) if row else 0
+        txs = conn.execute(
+            "SELECT id, delta, created_at FROM wallet_transactions WHERE user_id=? AND id>? AND delta<0 "
+            "AND COALESCE(kind,'')<>'coin_expire' ORDER BY id",
+            (user_tg_id, synced),
+        ).fetchall()
+        for tx in txs:
+            need = -int(tx["delta"])
+            credits = conn.execute(
+                "SELECT id, remaining FROM coin_wallet_credits WHERE user_id=? AND remaining>0 AND tx_id<? "
+                "AND (expires_at IS NULL OR expires_at>=?) ORDER BY (expires_at IS NULL), expires_at, id",
+                (user_tg_id, tx["id"], tx["created_at"]),
+            ).fetchall()
+            for c in credits:
+                if need <= 0:
+                    break
+                take = min(need, int(c["remaining"]))
+                conn.execute("UPDATE coin_wallet_credits SET remaining=remaining-? WHERE id=?", (take, c["id"]))
+                need -= take
+        last = conn.execute("SELECT COALESCE(MAX(id),0) FROM wallet_transactions WHERE user_id=?", (user_tg_id,)).fetchone()[0]
+        conn.execute("UPDATE users SET coin_credit_synced_tx=? WHERE telegram_id=?", (int(last), user_tg_id))
+
+
+    def expire_wallet_credits(self, user_tg_id: int = None) -> list:
+        """موجودی منقضی‌شده‌ی حاصل از تبدیل سکه را از کیف پول کم می‌کند و [(user_id, مبلغ)] برمی‌گرداند."""
+        now = self._db_now()
+        expired = []
+        with self._get_conn() as conn:
+            if user_tg_id is None:
+                uids = [r[0] for r in conn.execute("SELECT DISTINCT user_id FROM coin_wallet_credits WHERE remaining>0").fetchall()]
+            else:
+                uids = [user_tg_id]
+            for uid in uids:
+                if not conn.execute("SELECT 1 FROM coin_wallet_credits WHERE user_id=? AND remaining>0 LIMIT 1", (uid,)).fetchone():
+                    continue
+                self._sync_wallet_credits(conn, uid)
+                due = conn.execute(
+                    "SELECT id, remaining FROM coin_wallet_credits WHERE user_id=? AND remaining>0 "
+                    "AND expires_at IS NOT NULL AND expires_at<=?",
+                    (uid, now),
+                ).fetchall()
+                if not due:
+                    continue
+                total = sum(int(d["remaining"]) for d in due)
+                for d in due:
+                    conn.execute("UPDATE coin_wallet_credits SET remaining=0 WHERE id=?", (d["id"],))
+                balance = int(conn.execute("SELECT COALESCE(referral_credit,0) FROM users WHERE telegram_id=?", (uid,)).fetchone()[0])
+                deduct = min(total, max(balance, 0))
+                if deduct > 0:
+                    with _wallet_tag(conn, uid, "coin_expire", "انقضای موجودی حاصل از تبدیل سکه"):
+                        conn.execute("UPDATE users SET referral_credit=referral_credit-? WHERE telegram_id=?", (deduct, uid))
+                    last = conn.execute("SELECT COALESCE(MAX(id),0) FROM wallet_transactions WHERE user_id=?", (uid,)).fetchone()[0]
+                    conn.execute("UPDATE users SET coin_credit_synced_tx=? WHERE telegram_id=?", (int(last), uid))
+                    expired.append((uid, deduct))
+        return expired
+
+
+    def get_coin_expiry_lines(self, user_tg_id: int, limit: int = 3) -> list:
+        """[(تاریخ میلادی, تعداد)] نزدیک‌ترین انقضای سکه‌های کاربر."""
+        self.expire_coins(user_tg_id)
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT date(expires_at) d, SUM(remaining) n FROM coin_batches WHERE user_id=? AND remaining>0 "
+                "AND expires_at IS NOT NULL GROUP BY d ORDER BY d LIMIT ?",
+                (user_tg_id, int(limit)),
+            ).fetchall()
+        return [(r["d"], int(r["n"])) for r in rows]
+
+
+    def get_wallet_credit_expiry_lines(self, user_tg_id: int, limit: int = 3) -> list:
+        """[(تاریخ میلادی, مبلغ)] نزدیک‌ترین انقضای موجودی حاصل از سکه."""
+        self.expire_wallet_credits(user_tg_id)
+        with self._get_conn() as conn:
+            balance = conn.execute("SELECT COALESCE(referral_credit,0) FROM users WHERE telegram_id=?", (user_tg_id,)).fetchone()
+            rows = conn.execute(
+                "SELECT date(expires_at) d, SUM(remaining) n FROM coin_wallet_credits WHERE user_id=? AND remaining>0 "
+                "AND expires_at IS NOT NULL GROUP BY d ORDER BY d LIMIT ?",
+                (user_tg_id, int(limit)),
+            ).fetchall()
+        cap = max(int(balance[0]), 0) if balance else 0
+        lines = []
+        for r in rows:
+            amount = min(int(r["n"]), cap)
+            cap -= amount
+            if amount > 0:
+                lines.append((r["d"], amount))
+        return lines
 
 
     def get_cashback_totals(self) -> dict:
@@ -1840,6 +2021,7 @@ class OrdersMixin:
 
 
     def get_user_score(self, user_tg_id: int) -> int:
+        self.expire_coins(user_tg_id)
         with self._get_conn() as conn:
             row = conn.execute("SELECT COALESCE(score,0) score FROM users WHERE telegram_id=?", (user_tg_id,)).fetchone()
         return int(row["score"]) if row else 0
@@ -1881,6 +2063,7 @@ class OrdersMixin:
         settings = self.get_lottery_settings()
         if not settings["enabled"] or not settings["score_enabled"]:
             return {"status": "disabled", "winners": [], "prizes": settings["prizes"]}
+        self.expire_coins()
         import json as _json
         with self._get_conn() as conn:
             exists = conn.execute("SELECT id FROM lottery_log WHERE lottery_date=?", (lottery_date,)).fetchone()
@@ -1903,6 +2086,9 @@ class OrdersMixin:
                 if settings["prize_type"] == "wallet":
                     with _wallet_tag(conn, winner["user_id"], "lottery", "جایزه‌ی قرعه‌کشی"):
                         conn.execute("UPDATE users SET referral_credit=MAX(COALESCE(referral_credit,0)+?, MIN(COALESCE(referral_credit,0),0)) WHERE telegram_id=?", (winner["prize"], winner["user_id"]))
+            conn.execute(
+                f"UPDATE coin_batches SET remaining=0 WHERE remaining>0 AND user_id IN (SELECT telegram_id FROM users WHERE {participant_clause})"
+            )
             conn.execute(f"UPDATE users SET score=0 WHERE {participant_clause}")
         # کد تخفیف خارج از transaction اصلی ساخته می‌شود؛ لاگ و صفرشدن امتیاز از قبل قطعی است.
         if settings["prize_type"] == "discount":
