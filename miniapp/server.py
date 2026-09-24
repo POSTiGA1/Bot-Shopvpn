@@ -75,6 +75,7 @@ import report_router
 import card_to_card_payment
 from asset_versioning import static_version, ApiNoStoreMiddleware
 from database import Database, MENU_BUTTON_META, DEFAULT_MENU_ORDER, PAYMENT_METHOD_META
+from service_alerts import send_service_alert_sync
 from admin_panel.config_delivery_web import deliver_config_to_user_web
 from miniapp.auth import validate_init_data
 from sub_info import fetch_sub_info
@@ -93,6 +94,9 @@ from reseller_auto_provision import provision_auto_config, provision_test_config
 from test_config_provision import provision_test_plan, format_plan_amount, ProvisionError as TestPlanProvisionError
 from direct_panel_provision import provision_direct, ProvisionError as DirectProvisionError
 from renewal_engine import execute_renewal, RenewalError
+from service_refund import (
+    quote_service_refund, refund_quote_text, wallet_refund_amount, grant_service_refund_credit, refund_result_text,
+)
 from admin_panel.telegram_notify import send_message as _tg_notify, fetch_telegram_file as _tg_fetch_file
 
 app = FastAPI(title="V2Ray Shop Mini App API")
@@ -578,6 +582,13 @@ def api_delete_order_config(config_id: int, auth=Depends(get_verified_user)):
     return {"status": "ok"}
 
 
+@app.get("/api/wallet/transactions")
+def api_wallet_transactions(limit: int = Query(30, ge=1, le=100), auth=Depends(get_verified_user)):
+    """لاگ تغییرات موجودی کیف پول خود کاربر با موجودی قبل و بعد از هر تراکنش."""
+    tg_id, db, _ = auth
+    return db.get_wallet_transaction_entries(tg_id, limit)
+
+
 @app.get("/api/custom-configs")
 def api_custom_configs(auth=Depends(get_verified_user)):
     """کانفیگ‌های ساخته‌شده مستقیم روی پنل VPN (خرید شخصی/کانفیگ تست پنلی).
@@ -615,19 +626,37 @@ async def api_delete_custom_config(custom_config_id: int, auth=Depends(get_verif
     cc_row = next((c for c in rows if c["id"] == custom_config_id), None)
     if not cc_row:
         raise HTTPException(status_code=404, detail="کانفیگ یافت نشد یا متعلق به شما نیست.")
+    quote = await quote_service_refund(db, cc_row, tg_id, main_db)
+    panel_deleted = False
     if cc_row["panel_server_id"]:
         server = db.get_panel_server(cc_row["panel_server_id"])
         if server:
             try:
                 provider = get_provider(server)
-                await provider.delete_user(cc_row["username"])
+                panel_deleted = bool(await provider.delete_user(cc_row["username"]))
             except Exception:
                 logging.getLogger("miniapp").exception(
                     "حذف کاربر «%s» از پنل سرور #%s ناموفق بود؛ در هر صورت از لیست کاربر حذف می‌شود.",
                     cc_row["username"], cc_row["panel_server_id"],
                 )
-    db.delete_owned_custom_config(custom_config_id, tg_id)
-    return {"status": "ok"}
+    removed = db.delete_owned_custom_config(custom_config_id, tg_id, wallet_refund_amount(quote, panel_deleted))
+    refunded = 0
+    if removed:
+        refunded = wallet_refund_amount(quote, panel_deleted) or await grant_service_refund_credit(
+            main_db, tg_id, quote, panel_deleted, cc_row["username"],
+        )
+    return {"status": "ok", "refund_text": refund_result_text(quote, refunded)}
+
+
+@app.get("/api/custom-configs/{custom_config_id}/delete-quote")
+async def api_custom_config_delete_quote(custom_config_id: int, auth=Depends(get_verified_user)):
+    """مبلغ پرداختی و مبلغ برگشتی احتمالی قبل از حذف کامل سرویس شخصی."""
+    tg_id, db, _ = auth
+    cc_row = next((c for c in db.get_custom_configs_for_user(tg_id) if c["id"] == custom_config_id), None)
+    if not cc_row:
+        raise HTTPException(status_code=404, detail="کانفیگ یافت نشد یا متعلق به شما نیست.")
+    quote = await quote_service_refund(db, cc_row, tg_id, main_db)
+    return {**quote, "text": refund_quote_text(quote)}
 
 
 # ---------------------------------------------------------------------------
@@ -863,8 +892,10 @@ async def api_custom_config_renew_full(custom_config_id: int, body: RenewFullBod
     if discount_percent:
         price = round(price * (100 - discount_percent) / 100)
 
-    wallet_credit = db.get_wallet_credit(tg_id)
-    wallet_used = min(wallet_credit, price)
+    plan = db.plan_wallet_spend(tg_id, price)
+    if plan["blocked"]:
+        raise HTTPException(status_code=400, detail=plan["message"])
+    wallet_used = plan["wallet_used"]
     if wallet_used > 0:
         wallet_used = db.deduct_wallet_credit(tg_id, wallet_used)
 
@@ -1064,8 +1095,10 @@ async def api_create_custom_config(body: CustomConfigPurchase, auth=Depends(requ
     price = tier_info["total_after"]
     allowed_methods = db.get_effective_custom_config_payment_methods()
     wallet_allowed = allowed_methods is None or "wallet" in allowed_methods
-    wallet_credit = db.get_wallet_credit(tg_id) if wallet_allowed else 0
-    wallet_used = min(wallet_credit, price)
+    plan = db.plan_wallet_spend(tg_id, price, wallet_allowed)
+    if plan["blocked"]:
+        raise HTTPException(status_code=400, detail=plan["message"])
+    wallet_used = plan["wallet_used"]
     if wallet_used > 0:
         wallet_used = db.deduct_wallet_credit(tg_id, wallet_used)
 
@@ -1768,9 +1801,11 @@ async def api_create_order(body: OrderCreate, auth=Depends(require_joined)):
         discount_amount = db.compute_discount_amount(code_row, total_price)
         discount_code_id = code_row["id"]
 
-    wallet_credit = db.get_wallet_credit(tg_id)
     price_after_code = max(total_price - discount_amount, 0)
-    wallet_used = min(wallet_credit, price_after_code)
+    plan = db.plan_wallet_spend(tg_id, price_after_code)
+    if plan["blocked"]:
+        raise HTTPException(status_code=400, detail=plan["message"])
+    wallet_used = plan["wallet_used"]
 
     if discount_code_id and not db.claim_discount_use(discount_code_id, tg_id):
         raise HTTPException(status_code=400, detail="این کد تخفیف دیگر برای شما قابل استفاده نیست.")
@@ -3754,6 +3789,15 @@ def api_topup_request(body: TopupCreate, auth=Depends(require_joined)):
     min_topup = int(db.get_setting("min_amount_wallet_topup", "1000") or "1000")
     if body.amount < min_topup:
         raise HTTPException(status_code=400, detail=f"حداقل مبلغ {min_topup:,} تومان است.")
+    max_balance = int(db.get_setting("max_wallet_balance", "0") or "0")
+    if max_balance > 0:
+        current_balance = db.get_wallet_credit(tg_id)
+        if current_balance + body.amount > max_balance:
+            remaining = max(max_balance - current_balance, 0)
+            raise HTTPException(
+                status_code=400,
+                detail=f"با این شارژ موجودی از سقف مجاز ({max_balance:,} تومان) بیشتر می‌شود. حداکثر مبلغ قابل شارژ: {remaining:,} تومان.",
+            )
     topup_id = db.create_topup(tg_id, body.amount)
     return {
         "topup_id": topup_id,
@@ -3849,6 +3893,8 @@ async def api_order_receipt(
         f"🧾 سفارش #{order_id}\n"
         f"👤 کاربر: {(user['first_name'] if user else '') or ''} (@{(user['username'] if user else '') or '---'})\n"
         f"🆔 آیدی عددی: {tg_id}\n"
+        f"📱 شماره: {(user['phone_number'] if user else None) or 'ثبت نشده'}\n"
+        f"👛 موجودی کیف پول: {int((user['referral_credit'] if user else 0) or 0):,} تومان\n"
         f"{product_line}"
         f"💰 قیمت پایه: {order['base_price']:,} تومان\n"
     )
@@ -3859,10 +3905,15 @@ async def api_order_receipt(
     caption += f"💵 مبلغ قابل پرداخت: {order['final_price']:,} تومان"
 
     reply_markup = json.dumps({
-        "inline_keyboard": [[
-            {"text": "✅ تایید و ارسال کانفیگ", "callback_data": f"order_approve:{order_id}"},
-            {"text": "❌ رد کردن", "callback_data": f"order_reject:{order_id}"},
-        ]]
+        "inline_keyboard": [
+            [
+                {"text": "✅ تایید و ارسال کانفیگ", "callback_data": f"order_approve:{order_id}"},
+                {"text": "❌ رد کردن", "callback_data": f"order_reject:{order_id}"},
+            ],
+            [
+                {"text": "🚫 فیش فیک + بلاک کاربر", "callback_data": f"order_fake_receipt:{order_id}"},
+            ],
+        ]
     })
 
     admin_ids = db.list_admins()
@@ -4724,8 +4775,11 @@ def api_admin_add_configs(product_id: int, body: ConfigsAdd, auth=Depends(requir
 
 @app.delete("/api/admin/configs/{config_id}")
 def api_admin_delete_config(config_id: int, auth=Depends(require_full_access_admin)):
-    _, db, _ = auth
+    _, db, tenant = auth
+    row = db.get_config_by_id(config_id) if hasattr(db, "get_config_by_id") else None
     db.delete_config(config_id)
+    if row:
+        send_service_alert_sync(tenant.bot_token, db, f"🗑 حذف کانفیگ توسط ادمین\n\n🔗 کانفیگ #{config_id}\n📦 محصول: {row['product_id']}")
     return {"status": "ok"}
 
 
@@ -6201,6 +6255,7 @@ def api_admin_get_user(telegram_id: int, auth=Depends(require_full_admin)):
         "status": db.get_user_status(telegram_id),
         "orders": [dict(o) for o in history["orders"]],
         "topups": [dict(t) for t in history["topups"]],
+        "wallet_transactions": db.get_wallet_transaction_entries(telegram_id, 50),
     }
 
 
@@ -6264,9 +6319,19 @@ def api_admin_user_bank_configs(telegram_id: int, auth=Depends(require_full_admi
             "expires_at": c["expires_at"] if "expires_at" in c.keys() else None,
             "is_used": bool(c["is_used"]),
             "is_disabled": bool(c["is_disabled"]) if "is_disabled" in c.keys() else False,
+            "last_activity": (lambda a: {"action": a["action"], "details": a["details"], "created_at": a["created_at"]} if a else None)(db.get_last_config_activity(c["id"])),
         }
         for c in rows
     ]
+
+
+@app.get("/api/admin/user-configs/{config_id}/activity")
+def api_admin_config_activity(config_id: int, auth=Depends(require_full_admin)):
+    _, db, _ = auth
+    row = db.get_config_by_id(config_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="کانفیگ یافت نشد.")
+    return [dict(a) for a in db.get_config_activity(config_id)]
 
 
 class ConfigDisableBody(BaseModel):
@@ -6519,7 +6584,7 @@ def api_admin_adjust_wallet(body: WalletAdjust, auth=Depends(require_full_admin)
     user = db.get_user(body.telegram_id)
     if not user:
         raise HTTPException(status_code=404, detail="کاربری با این آیدی عددی پیدا نشد.")
-    db.add_wallet_credit(body.telegram_id, body.amount)
+    db.add_wallet_credit(body.telegram_id, body.amount, "admin_adjust", f"تنظیم دستی توسط ادمین {admin_id}")
     new_balance = db.get_wallet_credit(body.telegram_id)
     db.log_admin_action(
         admin_id, "wallet_adjust",
