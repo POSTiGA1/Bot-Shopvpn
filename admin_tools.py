@@ -57,6 +57,16 @@ NUM_FIELDS = {
         "lo": 1, "hi": 1_000_000, "presets": (1, 5, 10, 20, 50, 100), "default": 1, "card": "lottery",
         "hint": "فقط کاربرانی که حالت سکه‌شان «قرعه‌کشی» است و حداقل این تعداد سکه دارند وارد قرعه‌کشی می‌شوند.",
     },
+    "lt_cexp": {
+        "key": "coin_expiry_days", "title": "⏳ مهلت استفاده از سکه", "unit": "روز",
+        "lo": 0, "hi": 3650, "presets": (0, 3, 7, 14, 30, 60), "default": 7, "card": "lottery",
+        "hint": "هر سکه از لحظه‌ی دریافت این تعداد روز اعتبار دارد و بعد از آن سوخت می‌شود. ۰ یعنی بدون انقضا. فقط روی سکه‌های جدید اثر دارد.",
+    },
+    "lt_wexp": {
+        "key": "coin_wallet_expiry_days", "title": "⏳ مهلت استفاده از موجودی حاصل از سکه", "unit": "روز",
+        "lo": 0, "hi": 3650, "presets": (0, 3, 7, 14, 30, 60), "default": 7, "card": "lottery",
+        "hint": "مبلغی که از تبدیل سکه به کیف پول اضافه می‌شود از لحظه‌ی تبدیل این تعداد روز اعتبار دارد و باقی‌مانده‌اش بعد از آن از کیف پول کم می‌شود. ۰ یعنی بدون انقضا. فقط روی تبدیل‌های جدید اثر دارد.",
+    },
     "lt_exp": {
         "key": "lottery_discount_expiry_hours", "title": "⏳ اعتبار کد تخفیف جایزه", "unit": "ساعت",
         "lo": 1, "hi": 720, "presets": (6, 12, 24, 48, 72, 168), "default": 24, "card": "lottery",
@@ -105,6 +115,10 @@ def _num(text) -> str:
 
 def _on(flag) -> str:
     return "🟢 روشن" if flag else "🔴 خاموش"
+
+
+def _days(value) -> str:
+    return f"{int(value)} روز" if int(value) > 0 else "بدون انقضا"
 
 
 def _fmt_prize(value, prize_type: str) -> str:
@@ -256,6 +270,7 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
             f"• تبدیل به کیف پول: حداقل {snap['coin']['convert_min']:,} | حداکثر "
             + (f"{snap['coin']['convert_max']:,}" if snap["coin"]["convert_max"] else "بدون سقف") + " سکه",
             f"• حداقل سکه برای قرعه‌کشی: {snap['coin']['lottery_min']:,}",
+            f"• مهلت استفاده از سکه: {_days(snap['coin']['expiry_days'])} | از موجودی حاصل از سکه: {_days(snap['coin']['wallet_expiry_days'])}",
             f"• گزارش برندگان: {report}",
             "",
             f"👥 شرکت‌کنندگان واجد شرایط قرعه‌کشی: {snap['participants']:,} نفر",
@@ -280,6 +295,8 @@ def register(router: Router, db, is_main_bot, full_admin_only, senior_admin_only
             [_btn(f"⬇️ حداقل تبدیل: {snap['coin']['convert_min']:,}", "adm_ns:lt_cmin"),
              _btn("⬆️ حداکثر تبدیل: " + (f"{snap['coin']['convert_max']:,}" if snap["coin"]["convert_max"] else "∞"), "adm_ns:lt_cmax")],
             [_btn(f"🎟 حداقل سکه قرعه‌کشی: {snap['coin']['lottery_min']:,}", "adm_ns:lt_min")],
+            [_btn(f"⏳ مهلت سکه: {_days(snap['coin']['expiry_days'])}", "adm_ns:lt_cexp"),
+             _btn(f"⏳ مهلت موجودی: {_days(snap['coin']['wallet_expiry_days'])}", "adm_ns:lt_wexp")],
             [_btn(f"📣 مقصد گزارش: {'گروه' if s['report_chat_id'] else 'ادمین‌ها'}", "adm_lt_report")],
             [_btn("🏆 جدول سکه‌ها", "adm_lt_top"), _btn("📜 نتایج قبلی", "adm_lt_history")],
             [_btn("▶️ اجرای قرعه‌کشی همین حالا", "adm_lt_run")],

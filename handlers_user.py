@@ -4998,6 +4998,9 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
                 f"✅ اعتبار قابل استفاده: {max(st['spendable'], 0):,} تومان\n"
             )
         text += "\nاین موجودی (چه از شارژ دستی، چه از پورسانت زیرمجموعه‌گیری) به‌صورت خودکار در خرید بعدی شما کسر می‌شود."
+        expiring = await asyncio.to_thread(db.get_wallet_credit_expiry_lines, user_id)
+        for day, amount in expiring:
+            text += f"\n⏳ {amount:,} تومان از موجودی شما (حاصل از تبدیل سکه) تا {to_jalali_str(day)} معتبر است."
         return text
 
     @router.message(F.text.func(lambda t: t == db.get_setting("btn_wallet")))
@@ -5009,6 +5012,8 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
         coins = await asyncio.to_thread(db.get_user_score, user_id)
         mode = await asyncio.to_thread(db.get_user_coin_mode, user_id)
         lines = ["🪙 سکه‌های شما", "", f"موجودی سکه: {coins:,}"]
+        for day, amount in await asyncio.to_thread(db.get_coin_expiry_lines, user_id):
+            lines.append(f"⏳ {amount:,} سکه تا {to_jalali_str(day)} معتبر است.")
         if s["value"] > 0:
             lines.append(f"ارزش هر سکه: {s['value']:,} تومان (جمعاً {coins * s['value']:,} تومان)")
         lines.append("")
@@ -5087,7 +5092,8 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
         await message.answer(
             f"✅ {result['coins']:,} سکه به {result['amount']:,} تومان تبدیل و به کیف پول شما اضافه شد.\n"
             f"سکه‌ی باقی‌مانده: {result['coins_left']:,}\n"
-            f"موجودی کیف پول: {balance:,} تومان",
+            f"موجودی کیف پول: {balance:,} تومان"
+            + (f"\n⏳ این مبلغ تا {to_jalali_str(result['expires_at'])} معتبر است." if result.get("expires_at") else ""),
             reply_markup=kb.wallet_menu_kb(db),
         )
 

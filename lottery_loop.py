@@ -64,12 +64,28 @@ async def lottery_once(bot, db, lottery_date=None):
     return result
 
 
+async def _notify_expired(bot, rows, template):
+    for user_id, amount in rows:
+        try:
+            await bot.send_message(user_id, template.format(amount=f"{amount:,}"))
+        except Exception:
+            pass
+
+
 async def lottery_loop(bot, db):
-    """هر شب پس از نیمه‌شب یک بار قرعه‌کشی را اجرا می‌کند."""
+    """هر ۱۰ دقیقه انقضای سکه و موجودی حاصل از سکه را اعمال می‌کند و هر شب پس از نیمه‌شب یک بار قرعه‌کشی را اجرا می‌کند."""
+    last_date = datetime.now().date()
     while True:
         try:
-            await asyncio.sleep(_seconds_to_next_midnight())
-            await lottery_once(bot, db)
+            await asyncio.sleep(min(600, _seconds_to_next_midnight()))
+            coins = await asyncio.to_thread(db.expire_coins)
+            await _notify_expired(bot, coins, "⌛️ {amount} سکه‌ی شما منقضی شد.")
+            credits = await asyncio.to_thread(db.expire_wallet_credits)
+            await _notify_expired(bot, credits, "⌛️ {amount} تومان از موجودی کیف پول شما که از تبدیل سکه به دست آمده بود منقضی شد.")
+            today = datetime.now().date()
+            if today != last_date:
+                last_date = today
+                await lottery_once(bot, db)
         except asyncio.CancelledError:
             raise
         except Exception:
