@@ -66,6 +66,7 @@ SETTINGS_FORM_SECTIONS = [
                 "fields": [
                     {"key": "abangateway_payment_enabled", "label": "فعال بودن درگاه آبان گیت‌وی", "type": "bool"},
                     {"key": "abangateway_api_key", "label": "کلید API آبان گیت‌وی", "type": "password"},
+                    {"key": "abangateway_webhook_secret", "label": "کلید مخفی وب‌هوک آبان گیت‌وی", "type": "password"},
                 ],
             },
             {
