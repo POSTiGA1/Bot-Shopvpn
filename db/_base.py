@@ -1307,6 +1307,7 @@ class DatabaseBase:
             ("users", "referral_fraud_suspended", "INTEGER DEFAULT 0"),
             ("users", "signup_gift_given", "INTEGER DEFAULT 0"),
             ("users", "score", "INTEGER DEFAULT 0"),
+            ("users", "coin_mode", "TEXT DEFAULT 'wallet'"),
             ("panel_health", "last_alert", "TEXT"),
             ("orders", "status", "TEXT DEFAULT 'pending'"),
             ("orders", "base_price", "INTEGER"),

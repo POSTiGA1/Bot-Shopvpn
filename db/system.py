@@ -832,7 +832,6 @@ class SystemMixin:
         reward = (paid_amount * percent) // 100
         if reward > 0:
             self.add_wallet_credit(referrer_id, reward, "referral_reward", "پاداش اولین خرید زیرمجموعه")
-            self.add_score(referrer_id, self.get_score_points("referral"))
             return reward, referrer_id
         return None
 
@@ -881,7 +880,6 @@ class SystemMixin:
         reward = (paid_amount * percent) // 100
         if reward > 0:
             self.add_wallet_credit(referrer_id, reward, "referral_renewal_reward", "پورسانت تمدید سرویس زیرمجموعه")
-            self.add_score(referrer_id, self.get_score_points("referral"))
             return reward, referrer_id
         return None
 

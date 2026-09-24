@@ -380,11 +380,14 @@ class OrdersMixin:
         """تایید سفارش محصولات is_auto_provision که کانفیگشان لحظه‌ی خرید و بدون
         استفاده از بانک کانفیگ ساخته می‌شود (بدون config_id).
         فقط اگر سفارش pending یا processing (بعد از claim_order) باشد اعمال می‌شود."""
+        purchase_points = self.get_score_points("purchase")
         with self._get_conn() as conn:
             cur = conn.execute(
                 "UPDATE orders SET status='approved', updated_at=? WHERE id=? AND status IN ('pending','processing')",
                 (datetime.utcnow().isoformat(), order_id),
             )
+            if cur.rowcount:
+                self._award_order_score(conn, order_id, purchase_points)
             return cur.rowcount > 0
 
 
@@ -1169,7 +1172,7 @@ class OrdersMixin:
         "gift_code": "گیفت‌کد", "cashback": "کش‌بک", "referral_reward": "پاداش زیرمجموعه",
         "referral_invite": "پاداش دعوت", "reseller_commission": "کارمزد نمایندگی", "membership_fee": "هزینه‌ی عضویت نمایندگی",
         "lottery": "قرعه‌کشی", "location_fee": "تغییر لوکیشن", "location_refund": "بازگشت هزینه‌ی تغییر لوکیشن",
-        "admin_adjust": "تنظیم دستی ادمین", "admin_bulk_deduct": "کاهش گروهی توسط ادمین",
+        "coin_convert": "تبدیل سکه", "admin_adjust": "تنظیم دستی ادمین", "admin_bulk_deduct": "کاهش گروهی توسط ادمین",
     }
 
 
@@ -1733,23 +1736,93 @@ class OrdersMixin:
             )
 
 
+    @staticmethod
+    def _lottery_participant_clause(include_agents: bool, min_coins: int) -> str:
+        agent = "" if include_agents else "AND COALESCE(reseller_tier,'') = '' AND COALESCE(inline_reseller_enabled,0)=0"
+        return f"is_blocked=0 AND COALESCE(coin_mode,'wallet')='lottery' AND COALESCE(score,0)>={max(1, int(min_coins))} {agent}"
+
+
     def get_score_leaderboard(self, limit: int = 10, include_agents: bool = True):
-        clause = "" if include_agents else "AND COALESCE(reseller_tier,'') = '' AND COALESCE(inline_reseller_enabled,0)=0"
+        clause = self._lottery_participant_clause(include_agents, self.get_coin_settings()["lottery_min"])
         with self._get_conn() as conn:
             return conn.execute(
                 "SELECT telegram_id, username, first_name, COALESCE(score,0) score FROM users "
-                f"WHERE is_blocked=0 AND COALESCE(score,0)>0 {clause} ORDER BY score DESC, telegram_id LIMIT ?",
+                f"WHERE {clause} ORDER BY score DESC, telegram_id LIMIT ?",
                 (max(1, int(limit)),),
             ).fetchall()
 
 
     def count_score_participants(self, include_agents: bool = True) -> int:
-        clause = "" if include_agents else "AND COALESCE(reseller_tier,'') = '' AND COALESCE(inline_reseller_enabled,0)=0"
+        clause = self._lottery_participant_clause(include_agents, self.get_coin_settings()["lottery_min"])
+        with self._get_conn() as conn:
+            row = conn.execute(f"SELECT COUNT(*) c FROM users WHERE {clause}").fetchone()
+        return int(row["c"]) if row else 0
+
+
+    def get_coin_settings(self) -> dict:
+        def _int(key, default):
+            try:
+                return max(0, int(self.get_setting(key, str(default)) or 0))
+            except (TypeError, ValueError):
+                return default
+        return {
+            "enabled": self.get_setting("score_enabled", "1") == "1",
+            "value": _int("coin_value_toman", 0),
+            "convert_min": max(1, _int("coin_convert_min", 1)),
+            "convert_max": _int("coin_convert_max", 0),
+            "lottery_min": max(1, _int("lottery_min_coins", 1)),
+        }
+
+
+    def get_user_coin_mode(self, user_tg_id: int) -> str:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT coin_mode FROM users WHERE telegram_id=?", (user_tg_id,)).fetchone()
+        return "lottery" if row and row["coin_mode"] == "lottery" else "wallet"
+
+
+    def set_user_coin_mode(self, user_tg_id: int, mode: str) -> str:
+        mode = "lottery" if mode == "lottery" else "wallet"
+        with self._get_conn() as conn:
+            conn.execute("UPDATE users SET coin_mode=? WHERE telegram_id=?", (mode, user_tg_id))
+        return mode
+
+
+    def convert_coins_to_wallet(self, user_tg_id: int, coins: int) -> dict:
+        """تبدیل اتمیک سکه به موجودی کیف پول؛ در خطا ValueError با پیام فارسی می‌دهد."""
+        s = self.get_coin_settings()
+        coins = int(coins)
+        if not s["enabled"]:
+            raise ValueError("سیستم سکه غیرفعال است.")
+        if s["value"] <= 0:
+            raise ValueError("تبدیل سکه به موجودی هنوز فعال نشده است.")
+        if coins < s["convert_min"]:
+            raise ValueError(f"حداقل تعداد سکه برای تبدیل {s['convert_min']:,} است.")
+        if s["convert_max"] and coins > s["convert_max"]:
+            raise ValueError(f"حداکثر تعداد سکه برای هر تبدیل {s['convert_max']:,} است.")
+        amount = coins * s["value"]
         with self._get_conn() as conn:
             row = conn.execute(
-                f"SELECT COUNT(*) c FROM users WHERE is_blocked=0 AND COALESCE(score,0)>0 {clause}"
+                "SELECT COALESCE(score,0) score, COALESCE(coin_mode,'wallet') coin_mode FROM users WHERE telegram_id=?",
+                (user_tg_id,),
             ).fetchone()
-        return int(row["c"]) if row else 0
+            if not row:
+                raise ValueError("کاربر پیدا نشد.")
+            if row["coin_mode"] != "wallet":
+                raise ValueError("برای تبدیل، ابتدا حالت سکه‌ها را روی «تبدیل به کیف پول» بگذارید.")
+            if row["score"] < coins:
+                raise ValueError("تعداد سکه‌های شما کافی نیست.")
+            cur = conn.execute(
+                "UPDATE users SET score=score-? WHERE telegram_id=? AND COALESCE(score,0)>=?",
+                (coins, user_tg_id, coins),
+            )
+            if cur.rowcount == 0:
+                raise ValueError("تعداد سکه‌های شما کافی نیست.")
+            with _wallet_tag(conn, user_tg_id, "coin_convert", f"تبدیل {coins:,} سکه"):
+                conn.execute(
+                    "UPDATE users SET referral_credit=MAX(COALESCE(referral_credit,0)+?, MIN(COALESCE(referral_credit,0),0)) WHERE telegram_id=?",
+                    (amount, user_tg_id),
+                )
+        return {"coins": coins, "amount": amount, "coins_left": int(row["score"]) - coins}
 
 
     def get_cashback_totals(self) -> dict:
@@ -1791,6 +1864,7 @@ class OrdersMixin:
             "prizes": prizes,
             "discount_expiry_hours": max(1, int(self.get_setting("lottery_discount_expiry_hours", "24") or 24)),
             "report_chat_id": self.get_setting("lottery_report_chat_id", "") or "",
+            "min_coins": self.get_coin_settings()["lottery_min"],
         }
 
 
@@ -1800,7 +1874,7 @@ class OrdersMixin:
 
 
     def run_lottery_once(self, lottery_date: str = None) -> dict:
-        """سه نفر اول را به‌صورت اتمیک انتخاب و امتیاز همه را صفر می‌کند.
+        """سه نفر اول را به‌صورت اتمیک انتخاب و سکه‌ی همه‌ی شرکت‌کنندگان را صفر می‌کند.
         INSERT UNIQUE روی lottery_date مانع اجرای دوباره در چند worker/process است."""
         from datetime import date as _date
         lottery_date = lottery_date or _date.today().isoformat()
@@ -1812,8 +1886,8 @@ class OrdersMixin:
             exists = conn.execute("SELECT id FROM lottery_log WHERE lottery_date=?", (lottery_date,)).fetchone()
             if exists:
                 return {"status": "already_done", "winners": [], "prizes": settings["prizes"]}
-            agent_clause = "" if settings["agent_enabled"] else "AND COALESCE(reseller_tier,'') = '' AND COALESCE(inline_reseller_enabled,0)=0"
-            sql = f"SELECT telegram_id, username, first_name, COALESCE(score,0) score FROM users WHERE is_blocked=0 AND COALESCE(score,0)>0 {agent_clause} ORDER BY score DESC, RANDOM() LIMIT 3"
+            participant_clause = self._lottery_participant_clause(settings["agent_enabled"], settings["min_coins"])
+            sql = f"SELECT telegram_id, username, first_name, COALESCE(score,0) score FROM users WHERE {participant_clause} ORDER BY score DESC, RANDOM() LIMIT 3"
             rows = conn.execute(sql).fetchall()
             winners = []
             for idx, row in enumerate(rows, 1):
@@ -1829,7 +1903,7 @@ class OrdersMixin:
                 if settings["prize_type"] == "wallet":
                     with _wallet_tag(conn, winner["user_id"], "lottery", "جایزه‌ی قرعه‌کشی"):
                         conn.execute("UPDATE users SET referral_credit=MAX(COALESCE(referral_credit,0)+?, MIN(COALESCE(referral_credit,0),0)) WHERE telegram_id=?", (winner["prize"], winner["user_id"]))
-            conn.execute("UPDATE users SET score=0 WHERE score IS NOT NULL AND score<>0")
+            conn.execute(f"UPDATE users SET score=0 WHERE {participant_clause}")
         # کد تخفیف خارج از transaction اصلی ساخته می‌شود؛ لاگ و صفرشدن امتیاز از قبل قطعی است.
         if settings["prize_type"] == "discount":
             for winner in winners:

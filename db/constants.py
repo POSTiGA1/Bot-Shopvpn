@@ -244,6 +244,10 @@ DEFAULT_SETTINGS = {
     "score_purchase_points": "2",  # امتیاز هر خرید تاییدشده
     "score_renewal_points": "1",  # امتیاز هر تمدید تاییدشده
     "score_referral_points": "1",  # امتیاز هر دعوت موفق
+    "coin_value_toman": "0",
+    "coin_convert_min": "1",
+    "coin_convert_max": "0",
+    "lottery_min_coins": "1",
     "btn_wheel": "🎡 گردونه شانس",
     # پرداخت کریپتو (Plisio)
     "crypto_payment_enabled": "0",
