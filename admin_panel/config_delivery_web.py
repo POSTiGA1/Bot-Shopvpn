@@ -37,6 +37,34 @@ async def _send_individual_configs_web(user_tg_id: int, links: list, bot_token: 
             pass
 
 
+async def _send_tutorial_picker_web(bot_token: str, user_tg_id: int, db) -> None:
+    """معادل پنل وب تابع tutorial.send_device_picker (tutorial.py)؛ چون پنل وب
+    مستقل نمونه‌ی Bot اَیوگرم در اختیار ندارد، همان کیبورد انتخاب دستگاه را
+    به‌صورت دیکشنری خام Bot API می‌سازد (دکمه‌ها با همان callback_data الگوی
+    tut_pick:<device_id> که در handlers_user.py هندل می‌شود) و مستقیم با
+    admin_panel.telegram_notify ارسال می‌کند. کاملاً silent-fail است تا مانع
+    تحویل اصلی سفارش نشود."""
+    if db is None:
+        return
+    try:
+        devices = db.get_tutorial_devices(active_only=True)
+        if not devices:
+            return
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": f"{d['emoji']} {d['name']}", "callback_data": f"tut_pick:{d['id']}"}]
+                for d in devices
+            ]
+        }
+        await tg_send(
+            bot_token, user_tg_id,
+            "📚 برای اتصال بدون مشکل، دستگاه خودت رو انتخاب کن تا آموزش قدم‌به‌قدم رو برات بفرستم:",
+            reply_markup=keyboard,
+        )
+    except Exception:
+        pass
+
+
 async def deliver_config_to_user_web(
     user_tg_id: int,
     product_name: str,
@@ -89,3 +117,5 @@ async def deliver_config_to_user_web(
             await tg_send(bot_token, user_tg_id, post_text)
         except Exception:
             pass
+
+    await _send_tutorial_picker_web(bot_token, user_tg_id, db)
