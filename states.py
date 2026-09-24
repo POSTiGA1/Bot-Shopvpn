@@ -79,6 +79,10 @@ class AdminTutorialStepAdd(StatesGroup):
     waiting_content = State()
 
 
+class AdminTutorialRename(StatesGroup):
+    waiting_title = State()
+
+
 class AdminSetGeminiKey(StatesGroup):
     waiting_key = State()
 

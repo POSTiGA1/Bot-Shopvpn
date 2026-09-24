@@ -336,9 +336,6 @@ async def deliver_config_to_user(
     if db is not None:
         try:
             import tutorial
-            await tutorial.send_device_picker(
-                bot, user_tg_id, db,
-                intro="📚 برای اتصال بدون مشکل، دستگاه خودت رو انتخاب کن تا آموزش قدم‌به‌قدم رو برات بفرستم:",
-            )
+            await tutorial.send_device_picker(bot, user_tg_id, db)
         except Exception:
             pass

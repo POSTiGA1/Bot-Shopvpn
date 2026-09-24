@@ -54,6 +54,7 @@ import custom_gateway_payment
 import card_to_card_payment
 import report_router
 import tutorial
+import tutorial_hub
 from panel_providers import get_provider, PanelError, PanelUsernameTakenError
 from reseller_auto_provision import provision_auto_config, provision_test_config, provision_reseller_fixed_product, ProvisionError
 from direct_panel_provision import provision_direct, planned_usernames, ProvisionError as DirectProvisionError
@@ -2984,13 +2985,13 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
 
     @router.message(F.text.func(lambda t: t == db.get_setting("btn_tutorial")))
     async def tutorial_menu_entry(message: Message):
-        devices = await asyncio.to_thread(db.get_tutorial_devices, True)
-        if not devices:
-            await message.answer(db.get_text('handlers_user.auto_tut_none', 'فعلاً آموزشی برای هیچ دستگاهی ثبت نشده.'))
+        tutorials = await asyncio.to_thread(db.get_tutorials_for_target, tutorial_hub.GENERAL)
+        if not tutorials:
+            await message.answer(db.get_text('handlers_user.auto_tut_none', 'فعلاً آموزشی ثبت نشده.'))
             return
         await message.answer(
-            "📚 برای مشاهده‌ی آموزش اتصال، دستگاه خود را انتخاب کنید:",
-            reply_markup=kb.tutorial_devices_user_kb(devices),
+            "📚 یک آموزش را انتخاب کنید:",
+            reply_markup=kb.tutorial_devices_user_kb(tutorials),
         )
 
     @router.callback_query(F.data == "acct:hub")
@@ -3402,14 +3403,30 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
 
     @router.callback_query(F.data == "svc_tutorial")
     async def cb_service_tutorial(call: CallbackQuery):
-        devices = await asyncio.to_thread(db.get_tutorial_devices, True)
-        if not devices:
-            await call.answer(db.get_text('handlers_user.auto_tut_none', 'فعلاً آموزشی برای هیچ دستگاهی ثبت نشده.'), show_alert=True)
+        tutorials = await asyncio.to_thread(db.get_tutorials_for_target, tutorial_hub.GENERAL)
+        if not tutorials:
+            await call.answer(db.get_text('handlers_user.auto_tut_none', 'فعلاً آموزشی ثبت نشده.'), show_alert=True)
             return
         await call.answer()
         await call.message.answer(
-            "📚 برای مشاهده‌ی آموزش اتصال، دستگاه خود را انتخاب کنید:",
-            reply_markup=kb.tutorial_devices_user_kb(devices),
+            "📚 یک آموزش را انتخاب کنید:",
+            reply_markup=kb.tutorial_devices_user_kb(tutorials),
+        )
+
+    @router.callback_query(F.data.startswith(tutorial_hub.BUTTON_PREFIX))
+    async def cb_tutorial_target_button(call: CallbackQuery):
+        target_key = call.data[len(tutorial_hub.BUTTON_PREFIX):]
+        tutorials = await asyncio.to_thread(db.get_tutorials_for_target, target_key)
+        if not tutorials:
+            await call.answer('فعلاً آموزشی برای این بخش ثبت نشده.', show_alert=True)
+            return
+        await call.answer()
+        if len(tutorials) == 1:
+            await tutorial.send_device_steps(call.bot, call.from_user.id, db, tutorials[0]["id"])
+            return
+        await call.message.answer(
+            "📚 یک آموزش را انتخاب کنید:",
+            reply_markup=kb.tutorial_devices_user_kb(tutorials),
         )
 
     @router.callback_query(F.data.startswith("tut_pick:"))
@@ -3422,7 +3439,7 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
         await call.answer()
         sent = await tutorial.send_device_steps(call.bot, call.from_user.id, db, device_id)
         if not sent:
-            await call.message.answer(db.get_text('handlers_user.auto_tut_empty', 'برای این دستگاه هنوز مرحله‌ای ثبت نشده.'))
+            await call.message.answer(db.get_text('handlers_user.auto_tut_empty', 'برای این آموزش هنوز مرحله‌ای ثبت نشده.'))
 
     @router.callback_query(F.data.startswith("mo_links:"))
     async def cb_my_orders_links(call: CallbackQuery):

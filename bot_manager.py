@@ -45,6 +45,7 @@ from signup_gift import signup_gift_loop
 from report_router import ReportGroupGuardMiddleware
 from global_switch import GlobalBotSwitchMiddleware
 import keyboards as kb
+import tutorial_hub
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +274,8 @@ class BotManager:
         force_join_mw = ForceJoinMiddleware(db)
         dp.message.outer_middleware(force_join_mw)
         dp.callback_query.outer_middleware(force_join_mw)
+
+        tutorial_hub.install(bot, dp, db)
 
         dp.include_router(create_admin_router(db, is_main_bot=is_main_bot, bot_manager=self))
         dp.include_router(create_user_router(db, is_main_bot=is_main_bot, bot_manager=self))

@@ -17,6 +17,7 @@ from aiogram.types import (
 )
 
 import extra_gateway_registry
+import tutorial_hub
 from config import MINIAPP_URL
 from panel_providers import PANEL_TYPE_LABELS, INBOUND_SELECT_PANEL_TYPES
 from database import MENU_BUTTON_META, ACCOUNT_TOGGLE_KEYS
@@ -104,9 +105,9 @@ def _menu_items(db, is_admin: bool, is_reseller: bool, is_main_bot: bool, show_r
     def item_tutorial():
         if settings.get("tutorial_menu_enabled", "1") != "1":
             return None
-        if not db.get_tutorial_devices(active_only=True):
+        if tutorial_hub.GENERAL not in db.get_tutorial_bound_targets():
             return None
-        return (settings.get("btn_tutorial", "📚 آموزش اتصال"), settings.get("btn_tutorial_style", ""))
+        return (settings.get("btn_tutorial", "📚 آموزش"), settings.get("btn_tutorial_style", ""))
 
     def item_contact():
         return (settings.get("btn_contact", "📞 ارتباط با پشتیبانی"), settings.get("btn_contact_style", ""))
@@ -599,8 +600,6 @@ def service_detail_kb(db, cb_id: str, kind: str, deletable: bool, show_links: bo
             row4.append(InlineKeyboardButton(text="⬜ کیوآر کانفیگ", callback_data=f"svc_qr:{cb_id}"))
         if row4:
             rows.append(row4)
-        if db.get_tutorial_devices(active_only=True):
-            rows.append([InlineKeyboardButton(text="📚 آموزش اتصال", callback_data="svc_tutorial")])
         if show_links:
             rows.append([InlineKeyboardButton(text="📋 کانفیگ‌های تکی", callback_data=f"mo_links:{cb_id}")])
     if deletable and on("svc_show_delete"):
@@ -616,9 +615,9 @@ def service_detail_kb(db, cb_id: str, kind: str, deletable: bool, show_links: bo
 
 _ACCOUNT_HUB_CALLBACKS = {
     "acct_orders": ("acct_show_orders", "acct:orders"),
-    # دکمه‌ی «آموزش اتصال» داخل حساب کاربری از همان callback_data هندلر
-    # svc_tutorial (handlers_user.py) استفاده می‌کند - چون آن هندلر عمومی است
-    # و به هیچ سرویس/سفارش خاصی وابسته نیست، نیازی به هندلر جدا نیست.
+    # دکمه‌ی «آموزش» داخل حساب کاربری از همان callback_data هندلر
+    # svc_tutorial (handlers_user.py) استفاده می‌کند و منوی آموزش‌های کلی
+    # را نشان می‌دهد - چون آن هندلر عمومی است و به سرویس خاصی وابسته نیست.
     "acct_tutorial": ("acct_show_tutorial", "svc_tutorial"),
     "acct_referral": ("acct_show_referral", "acct:referral"),
     "acct_wallet": ("acct_show_wallet", "acct:wallet"),
@@ -633,7 +632,7 @@ def account_hub_kb(db) -> InlineKeyboardMarkup:
         toggle_key, callback_data = _ACCOUNT_HUB_CALLBACKS[key]
         if db.get_setting(toggle_key, "1") != "1":
             continue
-        if key == "acct_tutorial" and not db.get_tutorial_devices(active_only=True):
+        if key == "acct_tutorial" and tutorial_hub.GENERAL not in db.get_tutorial_bound_targets():
             continue
         text = db.get_setting(f"{key}_text", ACCOUNT_HUB_META[key]["default_text"])
         rows.append([_styled_inline(db, text, callback_data, f"{key}_style")])
@@ -1015,7 +1014,7 @@ def ai_faq_admin_kb(db, items) -> InlineKeyboardMarkup:
 
 
 def tutorial_devices_admin_kb(devices) -> InlineKeyboardMarkup:
-    """لیست دستگاه‌های آموزش اتصال برای ادمین: هرکدام دکمه‌ی مدیریت مراحل +
+    """لیست آموزش‌ها برای ادمین: هرکدام دکمه‌ی مدیریت (عنوان/مراحل/محل نمایش) +
     فعال/غیرفعال + حذف."""
     rows = []
     for d in devices:
@@ -1025,13 +1024,18 @@ def tutorial_devices_admin_kb(devices) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text=state_icon, callback_data=f"adm_tut_dev_toggle:{d['id']}"),
             InlineKeyboardButton(text="🗑", callback_data=f"adm_tut_dev_del:{d['id']}"),
         ])
-    rows.append([InlineKeyboardButton(text="➕ افزودن دستگاه جدید", callback_data="adm_tut_dev_add")])
+    rows.append([InlineKeyboardButton(text="➕ افزودن آموزش جدید", callback_data="adm_tut_dev_add")])
     rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:appearance")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def tutorial_device_steps_admin_kb(device_id: int, steps) -> InlineKeyboardMarkup:
-    rows = []
+    rows = [
+        [
+            InlineKeyboardButton(text="✏️ تغییر عنوان", callback_data=f"adm_tut_rename:{device_id}"),
+            InlineKeyboardButton(text="🔗 محل نمایش", callback_data=f"adm_tut_bind:{device_id}"),
+        ],
+    ]
     for i, s in enumerate(steps, start=1):
         kind = "🎬" if s["video_file_id"] else ("🖼" if s["photo_file_id"] else "📝")
         rows.append([
@@ -1039,12 +1043,41 @@ def tutorial_device_steps_admin_kb(device_id: int, steps) -> InlineKeyboardMarku
             InlineKeyboardButton(text="🗑", callback_data=f"adm_tut_step_del:{s['id']}:{device_id}"),
         ])
     rows.append([InlineKeyboardButton(text="➕ افزودن مرحله جدید", callback_data=f"adm_tut_step_add:{device_id}")])
-    rows.append([InlineKeyboardButton(text="⬅️ بازگشت به لیست دستگاه‌ها", callback_data="adm_tutorial_devices")])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت به لیست آموزش‌ها", callback_data="adm_tutorial_devices")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def tutorial_bind_main_kb(tutorial_id: int, selected: set) -> InlineKeyboardMarkup:
+    """صفحه‌ی اصلی «محل نمایش آموزش»: دو مقصد ویژه + گروه‌های دکمه‌ها/بخش‌ها."""
+    rows = []
+    for key, label in tutorial_hub.SPECIAL_TARGETS:
+        mark = "✅" if key in selected else "⬜️"
+        idx = tutorial_hub.FLAT_KEYS.index(key)
+        rows.append([InlineKeyboardButton(text=f"{mark} {label}", callback_data=f"adm_tut_tg:{tutorial_id}:{idx}:m")])
+    for g_idx, (_gk, title, items) in enumerate(tutorial_hub.GROUPS):
+        chosen = sum(1 for t in items if t["key"] in selected)
+        rows.append([InlineKeyboardButton(
+            text=f"{title} ({chosen}/{len(items)})", callback_data=f"adm_tut_bg:{tutorial_id}:{g_idx}",
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت به آموزش", callback_data=f"adm_tut_steps:{tutorial_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def tutorial_bind_group_kb(tutorial_id: int, group_idx: int, selected: set) -> InlineKeyboardMarkup:
+    """لیست دکمه‌ها/بخش‌های یک گروه با تیک انتخاب برای اتصال آموزش."""
+    rows = []
+    for t in tutorial_hub.GROUPS[group_idx][2]:
+        mark = "✅" if t["key"] in selected else "⬜️"
+        idx = tutorial_hub.FLAT_KEYS.index(t["key"])
+        rows.append([InlineKeyboardButton(
+            text=f"{mark} {t['label']}", callback_data=f"adm_tut_tg:{tutorial_id}:{idx}:{group_idx}",
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ بازگشت به گروه‌ها", callback_data=f"adm_tut_bind:{tutorial_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def tutorial_devices_user_kb(devices) -> InlineKeyboardMarkup:
-    """کیبورد انتخاب دستگاه برای کاربر، برای دیدن آموزش اتصال قدم‌به‌قدم."""
+    """کیبورد انتخاب آموزش برای کاربر (هر دکمه یک آموزش با عنوان خودش)."""
     rows = [[InlineKeyboardButton(text=f"{d['emoji']} {d['name']}", callback_data=f"tut_pick:{d['id']}")] for d in devices]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1265,8 +1298,8 @@ ADMIN_PANEL_ITEMS = [
     ("adm_bulk_wallet_credit", "➕ افزایش گروهی موجودی و اعلان", "adm_bulk_wallet_credit"),
     ("adm_cc_paymethods", "🛠 روش‌های پرداخت کانفیگ شخصی", "adm_cc_paymethods"),
     ("adm_edit_welcome", "📝 ویرایش پیام خوش‌آمد", "adm_edit_welcome"),
-    ("adm_edit_tutorial", "🎓 بخش آموزشی (متن/عکس/ویدیو)", "adm_edit_tutorial"),
-    ("adm_tutorial_devices", "📚 آموزش اتصال به‌تفکیک دستگاه", "adm_tutorial_devices"),
+    ("adm_edit_tutorial", "🎓 متن راهنمای /help (متن/عکس/ویدیو)", "adm_edit_tutorial"),
+    ("adm_tutorial_devices", "📚 مدیریت آموزش‌ها (عنوان، مراحل، محل نمایش)", "adm_tutorial_devices"),
     ("adm_admins_menu", "👤 مدیریت ادمین‌ها", "adm_admins_menu"),
     ("adm_broadcast", "📢 پیام همگانی", "adm_broadcast"),
     ("adm_deeplink_tools", "🔗 دیپ‌لینک و پست کانال", "adm_deeplink_tools"),
@@ -2440,7 +2473,7 @@ BUTTON_LABELS = {
     "btn_reseller_request": "دکمه درخواست نمایندگی سطح ۲",
     "btn_commission_reseller_request": "دکمه درخواست نمایندگی کمیسیونی",
     "btn_reseller_tiers": "دکمه انتخاب سطح نمایندگی",
-    "btn_tutorial": "دکمه آموزش اتصال",
+    "btn_tutorial": "دکمه آموزش",
 }
 
 

@@ -49,6 +49,7 @@ import ai_support
 import admin_tools
 import bulk_gifts
 import report_router
+import tutorial_hub
 from service_alerts import normalize_channel
 from panel_providers import (
     get_provider, PanelError, PanelUsernameTakenError, PANEL_TYPE_LABELS,
@@ -102,6 +103,7 @@ from states import (
     AdminSetSupportContact,
     AdminAIFaqAdd,
     AdminTutorialDeviceAdd,
+    AdminTutorialRename,
     AdminTutorialStepAdd,
     AdminSetGeminiKey,
     AdminSetGroqKey,
@@ -9104,17 +9106,23 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
         await message.answer("✅ بخش آموزشی به‌روزرسانی شد.", reply_markup=kb.admin_category_kb(db, is_main_bot, "appearance"))
 
     # -------------------------------------------------------------------
-    # آموزش اتصال به‌تفکیک دستگاه (قابلیت ۸۴): دستگاه‌های دلخواه ادمین،
-    # هرکدام چند مرحله‌ی متن/عکس/ویدیو که به‌ترتیب برای کاربر ارسال می‌شود.
+    # مدیریت آموزش‌ها: هر آموزش یک عنوان، چند مرحله‌ی متن/عکس/ویدیو و یک یا
+    # چند «محل نمایش» (منوی آموزش، بعد از خرید، هر دکمه/بخش بات) دارد.
     # -------------------------------------------------------------------
+
+    def _parse_tutorial_title(text: str):
+        parts = text.split(" ", 1)
+        if len(parts) == 2 and len(parts[0]) <= 4 and not parts[0].isalnum():
+            return parts[0], parts[1].strip()
+        return "📚", text
 
     async def _show_tutorial_devices(call: CallbackQuery):
         devices = await asyncio.to_thread(db.get_tutorial_devices)
         text = (
-            "📚 آموزش اتصال به‌تفکیک دستگاه\n\n"
-            "روی نام دستگاه بزن تا مراحلش رو مدیریت کنی؛ روی 🟢/⚪️ بزن تا برای کاربر نشون داده بشه یا نه.\n\n"
+            "📚 مدیریت آموزش‌ها\n\n"
+            "روی عنوان هر آموزش بزن تا مراحل و محل نمایشش را مدیریت کنی؛ روی 🟢/⚪️ بزن تا برای کاربر نشان داده شود یا نه.\n\n"
         )
-        text += "هنوز دستگاهی ثبت نشده." if not devices else "دستگاه‌های ثبت‌شده:"
+        text += "هنوز آموزشی ثبت نشده." if not devices else "آموزش‌های ثبت‌شده:"
         await safe_edit(call, text, reply_markup=kb.tutorial_devices_admin_kb(devices))
 
     @router.callback_query(F.data == "adm_tutorial_devices")
@@ -9131,8 +9139,8 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
         await state.set_state(AdminTutorialDeviceAdd.waiting_name)
         await safe_edit(
             call,
-            "نام دستگاه جدید را بفرست (مثلاً: اندروید، iOS، ویندوز).\n"
-            "برای اموجی سفارشی، اموجی را ابتدای متن بگذار (مثلاً: 🤖 اندروید)؛ وگرنه اموجی پیش‌فرض 📱 گذاشته می‌شود.",
+            "عنوان آموزش جدید را بفرست (مثلاً: اتصال در اندروید، نحوه‌ی شارژ کیف پول).\n"
+            "برای اموجی سفارشی، اموجی را ابتدای متن بگذار (مثلاً: 🤖 اتصال در اندروید)؛ وگرنه اموجی پیش‌فرض 📚 گذاشته می‌شود.",
             reply_markup=kb.admin_back_kb("adm_tutorial_devices"),
         )
         await call.answer()
@@ -9141,21 +9149,22 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
     async def process_tut_dev_add(message: Message, state: FSMContext):
         text = (message.text or "").strip()
         if not text:
-            await message.answer(db.get_text('handlers_admin.auto_e10dd1ec', 'لطفاً متن سوال را به\u200cصورت نوشتاری ارسال کن:'))
+            await message.answer("لطفاً عنوان آموزش را به‌صورت نوشتاری ارسال کن:")
             return
-        parts = text.split(" ", 1)
-        if len(parts) == 2 and len(parts[0]) <= 4 and not parts[0].isalnum():
-            emoji, name = parts[0], parts[1].strip()
-        else:
-            emoji, name = "📱", text
+        emoji, name = _parse_tutorial_title(text)
         if not name:
-            await message.answer("لطفاً یک نام معتبر برای دستگاه بفرست.")
+            await message.answer("لطفاً یک عنوان معتبر برای آموزش بفرست.")
             return
-        (await asyncio.to_thread(db.add_tutorial_device, name, emoji))
-        (await asyncio.to_thread(db.log_admin_action, message.from_user.id, "tutorial_device_add", f"دستگاه جدید: {emoji} {name}"))
+        tutorial_id = await asyncio.to_thread(db.add_tutorial_device, name, emoji)
+        await asyncio.to_thread(db.set_tutorial_target, tutorial_id, tutorial_hub.GENERAL, True)
+        await asyncio.to_thread(db.log_admin_action, message.from_user.id, "tutorial_device_add", f"آموزش جدید: {emoji} {name}")
         await state.clear()
-        devices = await asyncio.to_thread(db.get_tutorial_devices)
-        await message.answer("✅ دستگاه اضافه شد. حالا برایش مرحله‌های آموزش را اضافه کن.", reply_markup=kb.tutorial_devices_admin_kb(devices))
+        view_text, markup = await _tutorial_manage_view(tutorial_id)
+        await message.answer(
+            "✅ آموزش اضافه شد و به‌صورت پیش‌فرض در منوی «آموزش» نمایش داده می‌شود. "
+            "مرحله‌ها را اضافه کن و در صورت نیاز محل نمایشش را تغییر بده.\n\n" + view_text,
+            reply_markup=markup,
+        )
 
     @router.callback_query(F.data.startswith("adm_tut_dev_toggle:"))
     async def cb_admin_tut_dev_toggle(call: CallbackQuery):
@@ -9166,7 +9175,7 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
             return await call.answer(db.get_text('handlers_admin.auto_f25a5f7a', '⚠️ درخواست نامعتبر است.'), show_alert=True)
         device = await asyncio.to_thread(db.get_tutorial_device, device_id)
         if not device:
-            await call.answer(db.get_text('handlers_admin.auto_ebd7db09', 'این سوال قبلاً حذف شده.'), show_alert=True)
+            await call.answer("این آموزش قبلاً حذف شده.", show_alert=True)
             await _show_tutorial_devices(call)
             return
         (await asyncio.to_thread(db.set_tutorial_device_active, device_id, not device["is_active"]))
@@ -9181,21 +9190,30 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
         if device_id is None:
             return await call.answer(db.get_text('handlers_admin.auto_f25a5f7a', '⚠️ درخواست نامعتبر است.'), show_alert=True)
         (await asyncio.to_thread(db.delete_tutorial_device, device_id))
-        (await asyncio.to_thread(db.log_admin_action, call.from_user.id, "tutorial_device_delete", f"حذف دستگاه #{device_id}"))
+        (await asyncio.to_thread(db.log_admin_action, call.from_user.id, "tutorial_device_delete", f"حذف آموزش #{device_id}"))
         await _show_tutorial_devices(call)
         await call.answer(db.get_text('handlers_admin.auto_d89f1ae4', '🗑 حذف شد.'))
 
-    async def _show_tutorial_steps(call: CallbackQuery, device_id: int):
+    async def _tutorial_manage_view(device_id: int):
+        """(متن، کیبورد) صفحه‌ی مدیریت یک آموزش؛ اگر آموزش وجود نداشته باشد (None, None)."""
         device = await asyncio.to_thread(db.get_tutorial_device, device_id)
         if not device:
-            await call.answer(db.get_text('handlers_admin.auto_ebd7db09', 'این سوال قبلاً حذف شده.'), show_alert=True)
+            return None, None
+        steps = await asyncio.to_thread(db.get_tutorial_steps, device_id)
+        targets = await asyncio.to_thread(db.get_tutorial_targets, device_id)
+        status = "🟢 فعال" if device["is_active"] else "⚪️ غیرفعال"
+        text = f"{device['emoji']} {device['name']}\nوضعیت: {status}\n"
+        text += "📍 محل نمایش: " + (tutorial_hub.describe_targets(targets) if targets else "هیچ‌جا (برای کاربر نمایش داده نمی‌شود)") + "\n\n"
+        text += "مراحل آموزش (به‌ترتیب برای کاربر فرستاده می‌شوند):" if steps else "هنوز مرحله‌ای اضافه نشده."
+        return text, kb.tutorial_device_steps_admin_kb(device_id, steps)
+
+    async def _show_tutorial_steps(call: CallbackQuery, device_id: int):
+        text, markup = await _tutorial_manage_view(device_id)
+        if text is None:
+            await call.answer("این آموزش قبلاً حذف شده.", show_alert=True)
             await _show_tutorial_devices(call)
             return
-        steps = await asyncio.to_thread(db.get_tutorial_steps, device_id)
-        text = f"{device['emoji']} {device['name']}\n\nمراحل آموزش (به‌ترتیب برای کاربر فرستاده می‌شوند):"
-        if not steps:
-            text = f"{device['emoji']} {device['name']}\n\nهنوز مرحله‌ای اضافه نشده."
-        await safe_edit(call, text, reply_markup=kb.tutorial_device_steps_admin_kb(device_id, steps))
+        await safe_edit(call, text, reply_markup=markup)
 
     @router.callback_query(F.data.startswith("adm_tut_steps:"))
     async def cb_admin_tut_steps(call: CallbackQuery):
@@ -9206,6 +9224,124 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
             return await call.answer(db.get_text('handlers_admin.auto_f25a5f7a', '⚠️ درخواست نامعتبر است.'), show_alert=True)
         await _show_tutorial_steps(call, device_id)
         await call.answer()
+
+    @router.callback_query(F.data.startswith("adm_tut_rename:"))
+    async def cb_admin_tut_rename(call: CallbackQuery, state: FSMContext):
+        if not full_admin_only(call.from_user.id):
+            return await deny_support(call)
+        device_id = callback_id(call.data, "adm_tut_rename")
+        if device_id is None:
+            return await call.answer(db.get_text('handlers_admin.auto_f25a5f7a', '⚠️ درخواست نامعتبر است.'), show_alert=True)
+        device = await asyncio.to_thread(db.get_tutorial_device, device_id)
+        if not device:
+            await call.answer("این آموزش قبلاً حذف شده.", show_alert=True)
+            await _show_tutorial_devices(call)
+            return
+        await state.set_state(AdminTutorialRename.waiting_title)
+        await state.update_data(tut_device_id=device_id)
+        await safe_edit(
+            call,
+            f"عنوان فعلی: {device['emoji']} {device['name']}\n\n"
+            "عنوان جدید را بفرست. برای تغییر اموجی، آن را ابتدای متن بگذار؛ وگرنه اموجی فعلی حفظ می‌شود.",
+            reply_markup=kb.admin_back_kb(f"adm_tut_steps:{device_id}"),
+        )
+        await call.answer()
+
+    @router.message(AdminTutorialRename.waiting_title)
+    async def process_tut_rename(message: Message, state: FSMContext):
+        text = (message.text or "").strip()
+        if not text:
+            await message.answer("لطفاً عنوان را به‌صورت نوشتاری ارسال کن:")
+            return
+        data = await state.get_data()
+        device_id = data.get("tut_device_id")
+        if not device_id:
+            await state.clear()
+            await message.answer(db.get_text('handlers_admin.auto_0e29be08', '⚠️ خطایی رخ داد، دوباره تلاش کنید.'))
+            return
+        emoji, name = _parse_tutorial_title(text)
+        if not name:
+            await message.answer("لطفاً یک عنوان معتبر بفرست.")
+            return
+        has_emoji = emoji != "📚" or text.startswith("📚")
+        await asyncio.to_thread(db.rename_tutorial, device_id, name, emoji if has_emoji else None)
+        await asyncio.to_thread(db.log_admin_action, message.from_user.id, "tutorial_rename", f"تغییر عنوان آموزش #{device_id}: {name}")
+        await state.clear()
+        view_text, markup = await _tutorial_manage_view(device_id)
+        if view_text is None:
+            await message.answer("این آموزش قبلاً حذف شده.")
+            return
+        await message.answer("✅ عنوان ذخیره شد.\n\n" + view_text, reply_markup=markup)
+
+    async def _show_tutorial_bind_main(call: CallbackQuery, device_id: int):
+        device = await asyncio.to_thread(db.get_tutorial_device, device_id)
+        if not device:
+            await call.answer("این آموزش قبلاً حذف شده.", show_alert=True)
+            await _show_tutorial_devices(call)
+            return
+        selected = await asyncio.to_thread(db.get_tutorial_targets, device_id)
+        text = (
+            f"🔗 محل نمایش «{device['name']}»\n\n"
+            "هر جایی که تیک بزنی، زیر همان صفحه دکمه‌ی «📚 آموزش» برای کاربر نشان داده می‌شود "
+            "(وقتی کاربر آن دکمه/بخش را بزند). یک گروه را باز کن تا دکمه‌هایش را ببینی."
+        )
+        await safe_edit(call, text, reply_markup=kb.tutorial_bind_main_kb(device_id, selected))
+
+    @router.callback_query(F.data.startswith("adm_tut_bind:"))
+    async def cb_admin_tut_bind(call: CallbackQuery):
+        if not full_admin_only(call.from_user.id):
+            return await deny_support(call)
+        device_id = callback_id(call.data, "adm_tut_bind")
+        if device_id is None:
+            return await call.answer(db.get_text('handlers_admin.auto_f25a5f7a', '⚠️ درخواست نامعتبر است.'), show_alert=True)
+        await _show_tutorial_bind_main(call, device_id)
+        await call.answer()
+
+    async def _show_tutorial_bind_group(call: CallbackQuery, device_id: int, group_idx: int):
+        device = await asyncio.to_thread(db.get_tutorial_device, device_id)
+        if not device:
+            await call.answer("این آموزش قبلاً حذف شده.", show_alert=True)
+            await _show_tutorial_devices(call)
+            return
+        selected = await asyncio.to_thread(db.get_tutorial_targets, device_id)
+        title = tutorial_hub.GROUPS[group_idx][1]
+        text = f"🔗 «{device['name']}» - {title}\n\nروی هر مورد بزن تا آموزش به آن وصل یا از آن جدا شود:"
+        await safe_edit(call, text, reply_markup=kb.tutorial_bind_group_kb(device_id, group_idx, selected))
+
+    @router.callback_query(F.data.startswith("adm_tut_bg:"))
+    async def cb_admin_tut_bind_group(call: CallbackQuery):
+        if not full_admin_only(call.from_user.id):
+            return await deny_support(call)
+        parts = call.data.split(":")
+        if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit() or int(parts[2]) >= len(tutorial_hub.GROUPS):
+            return await call.answer(db.get_text('handlers_admin.auto_f25a5f7a', '⚠️ درخواست نامعتبر است.'), show_alert=True)
+        await _show_tutorial_bind_group(call, int(parts[1]), int(parts[2]))
+        await call.answer()
+
+    @router.callback_query(F.data.startswith("adm_tut_tg:"))
+    async def cb_admin_tut_bind_toggle(call: CallbackQuery):
+        if not full_admin_only(call.from_user.id):
+            return await deny_support(call)
+        parts = call.data.split(":")
+        valid = (
+            len(parts) == 4 and parts[1].isdigit() and parts[2].isdigit()
+            and int(parts[2]) < len(tutorial_hub.FLAT_KEYS)
+            and (parts[3] == "m" or (parts[3].isdigit() and int(parts[3]) < len(tutorial_hub.GROUPS)))
+        )
+        if not valid:
+            return await call.answer(db.get_text('handlers_admin.auto_f25a5f7a', '⚠️ درخواست نامعتبر است.'), show_alert=True)
+        device_id = int(parts[1])
+        if not await asyncio.to_thread(db.get_tutorial_device, device_id):
+            await call.answer("این آموزش قبلاً حذف شده.", show_alert=True)
+            await _show_tutorial_devices(call)
+            return
+        target_key = tutorial_hub.FLAT_KEYS[int(parts[2])]
+        await asyncio.to_thread(db.toggle_tutorial_target, device_id, target_key)
+        if parts[3] == "m":
+            await _show_tutorial_bind_main(call, device_id)
+        else:
+            await _show_tutorial_bind_group(call, device_id, int(parts[3]))
+        await call.answer(db.get_text('handlers_admin.auto_0479b78b', '✅ ذخیره شد'))
 
     @router.callback_query(F.data.startswith("adm_tut_step_add:"))
     async def cb_admin_tut_step_add(call: CallbackQuery, state: FSMContext):
