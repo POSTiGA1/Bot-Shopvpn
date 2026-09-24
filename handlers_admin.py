@@ -94,7 +94,6 @@ from states import (
     AdminEditWelcome,
     AdminEditPostDeliveryText,
     AdminSetQrBackground,
-    AdminEditTutorial,
     AdminReplyFlow,
     AdminTicketReplyFlow,
     AdminCommissionResellerFlow,
@@ -9056,54 +9055,6 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
         (await asyncio.to_thread(db.set_setting, "welcome_text", message.html_text))
         await state.clear()
         await message.answer(db.get_text('handlers_admin.auto_f4186c64', '✅ پیام خوش\u200cآمد به\u200cروزرسانی شد.'), reply_markup=kb.admin_category_kb(db, is_main_bot, "appearance"))
-
-    # -------------------------------------------------------------------
-    # بخش آموزشی (/help کاربر): متن، عکس یا ویدیو
-    # -------------------------------------------------------------------
-
-    @router.callback_query(F.data == "adm_edit_tutorial")
-    async def cb_admin_edit_tutorial(call: CallbackQuery, state: FSMContext):
-        if not full_admin_only(call.from_user.id):
-            return await deny_support(call)
-        await state.set_state(AdminEditTutorial.waiting_content)
-        cur_text = (await asyncio.to_thread(db.get_setting, "tutorial_text"))
-        cur_photo = (await asyncio.to_thread(db.get_setting, "tutorial_photo_file_id"))
-        cur_video = (await asyncio.to_thread(db.get_setting, "tutorial_video_file_id"))
-        status = "🚫 فعلاً چیزی تنظیم نشده."
-        if cur_video:
-            status = "فعلی: ویدیو" + (" + متن" if cur_text else "")
-        elif cur_photo:
-            status = "فعلی: عکس" + (" + متن" if cur_text else "")
-        elif cur_text:
-            status = f"فعلی: فقط متن\n{cur_text}"
-        await safe_edit(
-            call,
-            f"وضعیت فعلی بخش آموزشی:\n{status}\n\n"
-            "متن، عکس (با کپشن دلخواه) یا ویدیو (با کپشن دلخواه) را ارسال کنید تا جایگزین شود؛ "
-            "این محتوا با دستور /help برای کاربران نمایش داده می‌شود.",
-            reply_markup=kb.admin_back_kb("adm_cat:appearance"),
-        )
-        await call.answer()
-
-    @router.message(AdminEditTutorial.waiting_content)
-    async def process_edit_tutorial(message: Message, state: FSMContext):
-        if message.media_group_id:
-            await message.answer(db.get_text('handlers_admin.auto_97dadc39', '⚠️ ارسال آلبوم (چند عکس با هم) پشتیبانی نمی\u200cشود. فقط یک عکس یا متن تکی بفرست.'))
-            return
-        # html_text به‌جای text/caption: فرمت‌بندی و ایموجی‌های پریمیوم/سفارشی
-        # ادمین را حفظ می‌کند (parse_mode بات HTML است).
-        text = message.html_text if (message.text or message.caption) else ""
-        photo_file_id = message.photo[-1].file_id if message.photo else ""
-        video_file_id = message.video.file_id if message.video else ""
-        if not text and not photo_file_id and not video_file_id:
-            await message.answer("لطفاً متن، عکس یا ویدیو ارسال کنید.")
-            return
-        (await asyncio.to_thread(db.set_setting, "tutorial_text", text))
-        (await asyncio.to_thread(db.set_setting, "tutorial_photo_file_id", photo_file_id))
-        (await asyncio.to_thread(db.set_setting, "tutorial_video_file_id", video_file_id))
-        (await asyncio.to_thread(db.log_admin_action, message.from_user.id, "tutorial_change", "بخش آموزشی به‌روزرسانی شد."))
-        await state.clear()
-        await message.answer("✅ بخش آموزشی به‌روزرسانی شد.", reply_markup=kb.admin_category_kb(db, is_main_bot, "appearance"))
 
     # -------------------------------------------------------------------
     # مدیریت آموزش‌ها: هر آموزش یک عنوان، چند مرحله‌ی متن/عکس/ویدیو و یک یا

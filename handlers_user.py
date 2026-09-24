@@ -450,19 +450,7 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
 
     @router.message(Command("help"))
     async def help_cmd(message: Message):
-        text = (await asyncio.to_thread(db.get_setting, "tutorial_text"))
-        photo_file_id = (await asyncio.to_thread(db.get_setting, "tutorial_photo_file_id"))
-        video_file_id = (await asyncio.to_thread(db.get_setting, "tutorial_video_file_id"))
-        if video_file_id:
-            await message.answer_video(video_file_id, caption=text or None)
-        elif photo_file_id:
-            await message.answer_photo(photo_file_id, caption=text or None)
-        elif text:
-            await message.answer(text)
-        else:
-            await message.answer(db.get_text(
-                'handlers_user.help.not_set', 'ℹ️ فعلاً محتوای آموزشی تنظیم نشده است. برای سوالات با پشتیبانی در تماس باشید.'
-            ))
+        await tutorial_menu_entry(message)
 
     @router.message(Command("smartsub"))
     async def smartsub_cmd(message: Message):

@@ -137,10 +137,6 @@ class AdminEditTestPlan(StatesGroup):
     waiting_duration_hours = State()
 
 
-class AdminEditTutorial(StatesGroup):
-    waiting_content = State()
-
-
 class AdminCleanupSettings(StatesGroup):
     waiting_expired_days = State()
     waiting_test_days = State()
