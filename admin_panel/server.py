@@ -1341,6 +1341,7 @@ def api_app_config(admin=Depends(get_current_admin)):
                 ]}, {"title": "💳 آبان گیت‌وی (کارت به کارت خودکار)", "fields": [
                     {"key": "abangateway_payment_enabled", "label": "فعال بودن درگاه آبان گیت‌وی", "type": "bool"},
                     {"key": "abangateway_api_key", "label": "کلید API آبان گیت‌وی", "type": "password"},
+                    {"key": "abangateway_webhook_secret", "label": "کلید مخفی وب‌هوک آبان گیت‌وی", "type": "password"},
                 ]}, {"title": "💳 بلوپال (کارت به کارت خودکار)", "fields": [
                     {"key": "blupal_payment_enabled", "label": "فعال بودن درگاه بلوپال", "type": "bool"},
                     {"key": "blupal_api_key", "label": "کلید API بلوپال", "type": "password"},
