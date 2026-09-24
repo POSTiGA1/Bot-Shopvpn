@@ -84,6 +84,7 @@ from states import (
     AdminBulkGift,
     AdminBulkPrice,
     AdminBulkWalletDeduct,
+    AdminBulkWalletCredit,
     AdminDeepLinkTools,
     AdminChannelButton,
     AdminAddAdmin,
