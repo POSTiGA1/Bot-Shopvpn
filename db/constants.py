@@ -269,6 +269,7 @@ DEFAULT_SETTINGS = {
     # پرداخت کارت‌به‌کارت خودکار (آبان گیت وی)
     "abangateway_payment_enabled": "0",
     "abangateway_api_key": "",  # کلید API آبان گیت وی؛ از داخل بات (دکمه‌ی «تنظیم درگاه آبان گیت وی») قابل تنظیم است
+    "abangateway_webhook_secret": "",
     # پرداخت کارت‌به‌کارت خودکار (بلوپال)
     "blupal_payment_enabled": "0",
     "blupal_api_key": "",  # کلید API بلوپال؛ از داخل بات (دکمه‌ی «تنظیم درگاه بلوپال») قابل تنظیم است
