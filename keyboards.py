@@ -101,6 +101,13 @@ def _menu_items(db, is_admin: bool, is_reseller: bool, is_main_bot: bool, show_r
             return None
         return (settings.get("btn_wheel", "🎡 گردونه شانس"), settings.get("btn_wheel_style", ""))
 
+    def item_tutorial():
+        if settings.get("tutorial_menu_enabled", "1") != "1":
+            return None
+        if not db.get_tutorial_devices(active_only=True):
+            return None
+        return (settings.get("btn_tutorial", "📚 آموزش اتصال"), settings.get("btn_tutorial_style", ""))
+
     def item_contact():
         return (settings.get("btn_contact", "📞 ارتباط با پشتیبانی"), settings.get("btn_contact_style", ""))
 
@@ -143,6 +150,7 @@ def _menu_items(db, is_admin: bool, is_reseller: bool, is_main_bot: bool, show_r
         "btn_buy": item_buy,
         "btn_test": item_test,
         "btn_my_orders": item_my_orders,
+        "btn_tutorial": item_tutorial,
         "btn_referral": item_referral,
         "btn_wheel": item_wheel,
         "btn_contact": item_contact,
@@ -608,6 +616,10 @@ def service_detail_kb(db, cb_id: str, kind: str, deletable: bool, show_links: bo
 
 _ACCOUNT_HUB_CALLBACKS = {
     "acct_orders": ("acct_show_orders", "acct:orders"),
+    # دکمه‌ی «آموزش اتصال» داخل حساب کاربری از همان callback_data هندلر
+    # svc_tutorial (handlers_user.py) استفاده می‌کند - چون آن هندلر عمومی است
+    # و به هیچ سرویس/سفارش خاصی وابسته نیست، نیازی به هندلر جدا نیست.
+    "acct_tutorial": ("acct_show_tutorial", "svc_tutorial"),
     "acct_referral": ("acct_show_referral", "acct:referral"),
     "acct_wallet": ("acct_show_wallet", "acct:wallet"),
 }
@@ -620,6 +632,8 @@ def account_hub_kb(db) -> InlineKeyboardMarkup:
     for key in order:
         toggle_key, callback_data = _ACCOUNT_HUB_CALLBACKS[key]
         if db.get_setting(toggle_key, "1") != "1":
+            continue
+        if key == "acct_tutorial" and not db.get_tutorial_devices(active_only=True):
             continue
         text = db.get_setting(f"{key}_text", ACCOUNT_HUB_META[key]["default_text"])
         rows.append([_styled_inline(db, text, callback_data, f"{key}_style")])
@@ -2408,6 +2422,7 @@ BUTTON_LABELS = {
     "btn_reseller_request": "دکمه درخواست نمایندگی سطح ۲",
     "btn_commission_reseller_request": "دکمه درخواست نمایندگی کمیسیونی",
     "btn_reseller_tiers": "دکمه انتخاب سطح نمایندگی",
+    "btn_tutorial": "دکمه آموزش اتصال",
 }
 
 

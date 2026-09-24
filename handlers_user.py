@@ -2981,6 +2981,17 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
         text = await _account_hub_text(message.from_user.id)
         await message.answer(text, parse_mode="Markdown", reply_markup=kb.account_hub_kb(db))
 
+    @router.message(F.text.func(lambda t: t == db.get_setting("btn_tutorial")))
+    async def tutorial_menu_entry(message: Message):
+        devices = await asyncio.to_thread(db.get_tutorial_devices, True)
+        if not devices:
+            await message.answer(db.get_text('handlers_user.auto_tut_none', 'فعلاً آموزشی برای هیچ دستگاهی ثبت نشده.'))
+            return
+        await message.answer(
+            "📚 برای مشاهده‌ی آموزش اتصال، دستگاه خود را انتخاب کنید:",
+            reply_markup=kb.tutorial_devices_user_kb(devices),
+        )
+
     @router.callback_query(F.data == "acct:hub")
     async def cb_account_hub(call: CallbackQuery):
         text = await _account_hub_text(call.from_user.id)
@@ -7452,6 +7463,8 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
             await get_test_config(fake_message)
         elif key == "btn_my_orders":
             await my_orders(fake_message)
+        elif key == "btn_tutorial":
+            await tutorial_menu_entry(fake_message)
         elif key == "btn_wallet":
             await wallet_menu(fake_message)
         elif key == "btn_referral":
