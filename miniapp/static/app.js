@@ -1128,14 +1128,23 @@ async function renderServices() {
 function wireDeleteConfigButtons(root, onDeleted) {
   root.querySelectorAll("[data-del-kind]").forEach((el) => {
     el.onclick = async () => {
-      if (!confirm("⚠️ این عملیات غیرقابل بازگشت است.\nاطلاعات و لینک این کانفیگ برای همیشه از سیستم پاک می‌شود. ادامه می‌دهید؟")) return;
       const kind = el.dataset.delKind;
       const id = el.dataset.delId;
       const path = kind === "custom" ? `/api/custom-configs/${id}` : `/api/orders/configs/${id}`;
+      let quoteText = "";
+      if (kind === "custom") {
+        try {
+          quoteText = (await api(`${path}/delete-quote`)).text || "";
+        } catch (e0) {
+          quoteText = "";
+        }
+      }
+      if (!confirm("⚠️ این عملیات غیرقابل بازگشت است.\nاطلاعات و لینک این کانفیگ برای همیشه از سیستم پاک می‌شود." + (quoteText ? "\n\n" + quoteText : "") + "\n\nادامه می‌دهید؟")) return;
       el.disabled = true;
       try {
-        await api(path, { method: "DELETE" });
+        const res = await api(path, { method: "DELETE" });
         if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred("success");
+        if (res && res.refund_text) notify(res.refund_text);
         if (onDeleted) onDeleted();
       } catch (e2) {
         el.disabled = false;
@@ -2605,6 +2614,16 @@ async function renderWheel_refreshButtonOnly() {
 // ---------------------------------------------------------------------------
 // تب کیف پول
 // ---------------------------------------------------------------------------
+function walletTxListHtml(list) {
+  if (!list || !list.length) return `<div class="hint-text">هنوز تراکنشی ثبت نشده است.</div>`;
+  return list.map(t => `
+    <div style="padding:8px 0;border-bottom:1px solid rgba(128,128,128,.2)">
+      <div class="stat-row"><span>${t.delta > 0 ? "🟢" : "🔴"} ${escHtml(t.label)}</span><b dir="ltr">${t.delta > 0 ? "+" : ""}${fmt(t.delta)} تومان</b></div>
+      <div class="hint-text" style="margin:0">موجودی: ${fmt(t.balance_before)} ← ${fmt(t.balance_after)}${t.note ? " · " + escHtml(t.note) : ""}</div>
+      <div class="hint-text" style="margin:0">${toJalaliStr(String(t.created_at).replace(" ", "T") + "Z", true)}</div>
+    </div>`).join("");
+}
+
 async function renderWallet() {
   content.innerHTML = skeleton(2);
   try {
@@ -2616,12 +2635,21 @@ async function renderWallet() {
         <h3><span class="ic">👛</span>موجودی فعلی</h3>
         <div class="stat-row"><span>قابل استفاده برای خرید</span><b>${fmt(me.wallet_credit)} تومان</b></div>
       </div>
+      <div class="eyebrow">تراکنش‌های اخیر</div>
+      <div class="card" id="wallet-tx-card"><div class="hint-text">در حال بارگذاری...</div></div>
       <div class="eyebrow">شارژ کیف پول</div>
       <div class="card" id="topup-card">
         <input id="topup-amount" class="input" type="number" placeholder="مبلغ به تومان" />
         <button class="btn" id="topup-btn">ثبت درخواست شارژ</button>
       </div>
     `;
+    api("/api/wallet/transactions").then(list => {
+      const box = document.getElementById("wallet-tx-card");
+      if (box) box.innerHTML = walletTxListHtml(list);
+    }).catch(() => {
+      const box = document.getElementById("wallet-tx-card");
+      if (box) box.innerHTML = `<div class="hint-text">دریافت تراکنش‌ها ناموفق بود.</div>`;
+    });
     document.getElementById("topup-btn").onclick = async () => {
       const amount = parseInt(document.getElementById("topup-amount").value, 10);
       if (!amount || amount < 1000) return notify("حداقل مبلغ ۱۰۰۰ تومان است.");
@@ -4934,7 +4962,7 @@ async function renderAdminUsersList(body) {
   document.getElementById("broadcast-expired-btn").onclick = async () => {
     const text = document.getElementById("broadcast-expired-text").value.trim();
     if (!text) { notify("متن پیام را وارد کن."); return; }
-    if (!confirm("این پیام برای همه‌ی کاربران منقضی‌شده ارسال می‌شود. ادامه؟")) return;
+    if (!confirm(`نمونه‌ی دقیق پیام:\n\n${text}\n\nاین پیام برای همه‌ی کاربران منقضی‌شده ارسال می‌شود. ادامه؟`)) return;
     try {
       const res = await api("/api/admin/users/broadcast-expired", { method: "POST", body: JSON.stringify({ text }) });
       tg.HapticFeedback.notificationOccurred("success");
@@ -4946,7 +4974,7 @@ async function renderAdminUsersList(body) {
   document.getElementById("broadcast-all-btn").onclick = async () => {
     const text = document.getElementById("broadcast-all-text").value.trim();
     if (!text) { notify("متن پیام را وارد کن."); return; }
-    if (!confirm("این پیام برای همه‌ی کاربران ربات (غیرمسدود و مسدود) ارسال می‌شود و قابل بازگشت نیست. مطمئنی؟")) return;
+    if (!confirm(`نمونه‌ی دقیق پیام:\n\n${text}\n\nاین پیام برای همه‌ی کاربران ربات (غیرمسدود و مسدود) ارسال می‌شود و قابل بازگشت نیست. مطمئنی؟`)) return;
     try {
       const res = await api("/api/admin/users/broadcast-all", { method: "POST", body: JSON.stringify({ text }) });
       tg.HapticFeedback.notificationOccurred("success");
@@ -5012,7 +5040,9 @@ async function renderAdminUserDetail(body) {
         </div>
         <span class="badge ${c.is_disabled ? "rejected" : "approved"}" style="width:fit-content">${c.is_disabled ? "غیرفعال" : "فعال"}</span>
         ${adminConfigLinkBox(c.link)}
+        ${c.last_activity ? `<div class="hint-text" style="margin:0">🕘 آخرین فعالیت: ${escHtml(c.last_activity.details || c.last_activity.action || "ثبت‌شده")} · ${c.last_activity.created_at ? toJalaliStr(c.last_activity.created_at, true) : ""}</div>` : `<div class="hint-text" style="margin:0">🕘 هنوز فعالیتی برای این کانفیگ ثبت نشده.</div>`}
         <div class="admin-list-row-actions" style="margin-top:4px">
+          <button class="btn outline small" data-bank-activity="${c.id}" style="width:auto">📋 جزئیات فعالیت</button>
           <button class="btn ${c.is_disabled ? "" : "outline"} small" data-bank-toggle="${c.id}" data-bank-disabled="${c.is_disabled ? 1 : 0}" style="width:auto">${c.is_disabled ? "✅ فعال کردن" : "⛔️ غیرفعال کردن"}</button>
           <button class="btn outline small" data-bank-delete="${c.id}" style="width:auto">🗑 حذف</button>
         </div>
@@ -5058,6 +5088,11 @@ async function renderAdminUserDetail(body) {
     </div>
 
     <div class="card">
+      <div class="eyebrow" style="margin-top:0">🧾 لاگ تغییرات موجودی کیف‌پول</div>
+      ${walletTxListHtml(u.wallet_transactions)}
+    </div>
+
+    <div class="card">
       <div class="eyebrow" style="margin-top:0">✉️ ارسال پیام مستقیم</div>
       <textarea class="input" id="detail-message-text" rows="2" placeholder="متن پیام..." style="margin-bottom:8px;resize:vertical"></textarea>
       <button class="btn small" id="detail-message-send" style="width:auto">ارسال پیام</button>
@@ -5081,6 +5116,16 @@ async function renderAdminUserDetail(body) {
       navigator.clipboard.writeText(btn.dataset.copyLink);
       tg.HapticFeedback.notificationOccurred("success");
       notify("لینک کپی شد.");
+    };
+  });
+
+  document.querySelectorAll("[data-bank-activity]").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        const rows = await api(`/api/admin/user-configs/${btn.dataset.bankActivity}/activity`);
+        const html = rows.length ? rows.map((a) => `<div style="padding:8px 0;border-bottom:1px solid var(--border)"><b>${escHtml(a.details || a.action || "فعالیت")}</b><div class="hint-text" style="margin:3px 0 0">${a.created_at ? toJalaliStr(a.created_at, true) : ""}</div></div>`).join("") : `<div class="hint-text">فعالیتی ثبت نشده.</div>`;
+        openModal("📋 جزئیات فعالیت کانفیگ", `<div>${html}</div>`);
+      } catch (e) { notify("⚠️ " + e.message); }
     };
   });
 
