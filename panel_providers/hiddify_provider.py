@@ -31,6 +31,9 @@ from .base import BasePanelProvider, PanelUserResult, PanelError, PanelUsernameT
 
 class HiddifyProvider(BasePanelProvider):
 
+    def _session(self) -> aiohttp.ClientSession:
+        return aiohttp.ClientSession(connector=self._build_connector())
+
     def _base_url(self) -> str:
         return self.server["api_url"].rstrip("/")
 
@@ -87,7 +90,7 @@ class HiddifyProvider(BasePanelProvider):
             "package_days": duration_days,
             "comment": "ساخته‌شده توسط ShopVPN (کانفیگ شخصی)",
         }
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             try:
                 async with session.post(
                     f"{self._base_url()}/api/v2/admin/user/",
@@ -105,7 +108,7 @@ class HiddifyProvider(BasePanelProvider):
         return PanelUserResult(username=username, subscription_url=sub_url, raw=payload)
 
     async def delete_user(self, username: str) -> bool:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             try:
                 user = await self._find_by_name(session, username)
             except PanelError:
@@ -121,7 +124,7 @@ class HiddifyProvider(BasePanelProvider):
                 raise PanelError(f"خطا در اتصال به پنل: {e or 'پاسخی از سرور در زمان مقرر دریافت نشد (timeout)'}") from e
 
     async def get_user_usage(self, username: str) -> dict:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             user = await self._find_by_name(session, username)
         used_gb = user.get("current_usage_GB", 0) or 0
         limit_gb = user.get("usage_limit_GB", 0) or 0
@@ -132,26 +135,30 @@ class HiddifyProvider(BasePanelProvider):
         }
 
     async def get_user(self, username: str) -> PanelUserResult:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             user = await self._find_by_name(session, username)
         sub_url = f"{self._sub_base_url()}/{user.get('uuid')}/"
         return PanelUserResult(username=username, subscription_url=sub_url, raw=user)
 
     async def test_connection(self) -> bool:
         try:
-            async with aiohttp.ClientSession() as session:
+            async with self._session() as session:
                 async with session.get(
                     f"{self._base_url()}/api/v2/admin/user/",
                     headers=self._headers(),
                     timeout=aiohttp.ClientTimeout(total=20),
                 ) as resp:
-                    return resp.status < 400
-        except aiohttp.ClientError:
+                    if resp.status >= 400:
+                        self.last_error = f"پاسخ پنل با کد {resp.status}؛ کلید API یا آدرس پنل را بررسی کنید."
+                        return False
+                    return True
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            self.last_error = f"خطا در اتصال به پنل: {e or 'پاسخی از سرور در زمان مقرر دریافت نشد (timeout)'}"
             return False
 
     async def update_user(self, username: str, add_volume_gb: float = 0, add_days: int = 0,
                            reset_usage: bool = False, preserve_remaining: bool = False) -> PanelUserResult:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             user = await self._find_by_name(session, username)
             # تمدید «کامل» (reset_usage=True) یعنی مصرف صفر می‌شود. سقف حجم جدید به دو
             # شکل ممکن است محاسبه شود:
@@ -196,7 +203,7 @@ class HiddifyProvider(BasePanelProvider):
         return PanelUserResult(username=username, subscription_url=sub_url, raw=payload)
 
     async def set_enabled(self, username: str, enabled: bool) -> None:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             user = await self._find_by_name(session, username)
             payload = dict(user)
             payload["enable"] = bool(enabled)
@@ -216,7 +223,7 @@ class HiddifyProvider(BasePanelProvider):
     async def rename_user(self, username: str, new_username: str) -> None:
         """روی هیدیفای «name» فقط یک برچسب نمایشی است (شناسه‌ی واقعی uuid
         است)، پس تغییر آن کاملاً بی‌خطر است و لینک/مصرف قبلی دست‌نخورده می‌ماند."""
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             user = await self._find_by_name(session, username)
             payload = dict(user)
             payload["name"] = new_username
@@ -245,7 +252,7 @@ class HiddifyProvider(BasePanelProvider):
         خطای «405 Method Not Allowed» می‌داد (یعنی API v2 هیدیفای اصلاً PUT
         را روی این مسیر ثبت نکرده و فقط PATCH/GET/POST/DELETE را می‌شناسد) -
         اگر باز هم خطای مشابه دیده شد، حتماً گزارش شود."""
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             user = await self._find_by_name(session, username)
             new_uuid = str(uuid_lib.uuid4())
             payload = dict(user)

@@ -4,6 +4,7 @@ import secrets
 import time
 import uuid
 
+from . import auth_cache
 from ._http import new_session, request_json, http_error, load_json, server_value, inbound_ids, new_limit_bytes
 from .base import BasePanelProvider, PanelUserResult, PanelError, PanelUsernameTakenError
 
@@ -11,6 +12,10 @@ _SETTINGS_TAIL = {"decryption": "none", "fallbacks": []}
 
 
 class AlirezaProvider(BasePanelProvider):
+    supports_user_limit = True
+
+    def _session(self):
+        return new_session(cookies=True, server=self.server)
 
     def _base(self) -> str:
         return self.server["api_url"].rstrip("/")
@@ -32,6 +37,19 @@ class AlirezaProvider(BasePanelProvider):
         if not isinstance(data, dict) or not data.get("success"):
             raise PanelError("نام کاربری یا رمز عبور ادمین پنل نادرست است.")
 
+    async def _authed_session(self):
+        """سشن جدید؛ در صورت وجود کوکی لاگینِ معتبر در کش از آن استفاده می‌شود
+        (بدون درخواست /login تکراری)، وگرنه لاگین واقعی انجام و کوکی کش می‌شود."""
+        session = self._session()
+        key = auth_cache.cache_key("alireza", self.server)
+        cached = auth_cache.get_cookies(key)
+        if cached:
+            session.cookie_jar.update_cookies(cached)
+            return session
+        await self._login(session)
+        auth_cache.set_cookies(key, {c.key: c.value for c in session.cookie_jar})
+        return session
+
     async def _api(self, session, method: str, path: str, action: str, **kwargs) -> dict:
         status, data, text = await request_json(session, method, f"{self._base()}/xui/API/{path}", **kwargs)
         if status >= 400:
@@ -47,8 +65,7 @@ class AlirezaProvider(BasePanelProvider):
         return data.get("obj") or []
 
     async def list_inbounds(self) -> list:
-        async with new_session(cookies=True) as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             inbounds = await self._inbounds(session)
         return [
             {"id": ib["id"], "remark": ib.get("remark", ""), "protocol": ib.get("protocol", ""), "port": ib.get("port")}
@@ -77,7 +94,7 @@ class AlirezaProvider(BasePanelProvider):
             json=self._payload(inbound_id, client),
         )
 
-    async def create_user(self, username: str, volume_gb: int, duration_days: int) -> PanelUserResult:
+    async def create_user(self, username: str, volume_gb: int, duration_days: int, user_limit: int = 0) -> PanelUserResult:
         ids = inbound_ids(self.server)
         if not ids or not self._sub_base():
             raise PanelError("این سرور هنوز کامل تنظیم نشده (inbound یا آدرس Subscription خالی است).")
@@ -86,7 +103,7 @@ class AlirezaProvider(BasePanelProvider):
             "id": str(uuid.uuid4()),
             "flow": "",
             "email": username,
-            "limitIp": 0,
+            "limitIp": int(user_limit or 0),
             "totalGB": int(volume_gb * (1024 ** 3)),
             "expiryTime": int((time.time() + duration_days * 86400) * 1000) if duration_days else 0,
             "enable": True,
@@ -94,8 +111,7 @@ class AlirezaProvider(BasePanelProvider):
             "subId": sub_id,
             "reset": 0,
         }
-        async with new_session(cookies=True) as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             try:
                 await self._api(session, "POST", "inbounds/addClient", "ساخت کاربر", json=self._payload(ids[0], client))
             except PanelError as exc:
@@ -106,8 +122,7 @@ class AlirezaProvider(BasePanelProvider):
         return PanelUserResult(username=username, subscription_url=self._sub_url(sub_id), raw=client)
 
     async def delete_user(self, username: str) -> bool:
-        async with new_session(cookies=True) as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             try:
                 client, inbound_id, _ = await self._find(session, username)
             except PanelError as exc:
@@ -130,8 +145,7 @@ class AlirezaProvider(BasePanelProvider):
         return "active" if client.get("enable", True) else "disabled"
 
     async def get_user_usage(self, username: str) -> dict:
-        async with new_session(cookies=True) as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             client, _, stats = await self._find(session, username)
         used = int(stats.get("up") or 0) + int(stats.get("down") or 0)
         return {
@@ -141,8 +155,7 @@ class AlirezaProvider(BasePanelProvider):
         }
 
     async def get_user(self, username: str) -> PanelUserResult:
-        async with new_session(cookies=True) as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             client, _, _ = await self._find(session, username)
         url = self._sub_url(client.get("subId"))
         if not url:
@@ -150,9 +163,9 @@ class AlirezaProvider(BasePanelProvider):
         return PanelUserResult(username=username, subscription_url=url, raw=client)
 
     async def update_user(self, username: str, add_volume_gb: float = 0, add_days: int = 0,
-                           reset_usage: bool = False, preserve_remaining: bool = False) -> PanelUserResult:
-        async with new_session(cookies=True) as session:
-            await self._login(session)
+                           reset_usage: bool = False, preserve_remaining: bool = False,
+                           user_limit: int = None) -> PanelUserResult:
+        async with await self._authed_session() as session:
             client, inbound_id, stats = await self._find(session, username)
             now_ms = int(time.time() * 1000)
             current_expiry = int(client.get("expiryTime") or 0)
@@ -162,6 +175,8 @@ class AlirezaProvider(BasePanelProvider):
             used = int(stats.get("up") or 0) + int(stats.get("down") or 0)
             updated["totalGB"] = new_limit_bytes(client.get("totalGB"), used, add_volume_gb, reset_usage, preserve_remaining)
             updated["enable"] = True
+            if user_limit is not None:
+                updated["limitIp"] = int(user_limit)
             await self._update_client(session, inbound_id, client["id"], updated, "بروزرسانی کاربر")
             if reset_usage:
                 try:
@@ -173,8 +188,7 @@ class AlirezaProvider(BasePanelProvider):
         return PanelUserResult(username=username, subscription_url=self._sub_url(updated.get("subId")), raw=updated)
 
     async def revoke_credentials(self, username: str) -> PanelUserResult:
-        async with new_session(cookies=True) as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             client, inbound_id, _ = await self._find(session, username)
             updated = dict(client)
             updated["id"] = str(uuid.uuid4())
@@ -185,26 +199,30 @@ class AlirezaProvider(BasePanelProvider):
         return PanelUserResult(username=username, subscription_url=self._sub_url(updated["subId"]), raw=updated)
 
     async def set_enabled(self, username: str, enabled: bool) -> None:
-        async with new_session(cookies=True) as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             client, inbound_id, _ = await self._find(session, username)
             updated = dict(client)
             updated["enable"] = bool(enabled)
             await self._update_client(session, inbound_id, client["id"], updated, "تغییر وضعیت کاربر")
 
     async def rename_user(self, username: str, new_username: str) -> None:
-        async with new_session(cookies=True) as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             client, inbound_id, _ = await self._find(session, username)
             updated = dict(client)
             updated["email"] = new_username
             await self._update_client(session, inbound_id, client["id"], updated, "تغییر نام کاربر")
 
     async def test_connection(self) -> bool:
+        """همیشه واقعاً لاگین می‌کند (نه از کش) تا واقعاً یوزر/پس فعلی را تست کند."""
         try:
-            async with new_session(cookies=True) as session:
+            async with self._session() as session:
                 await self._login(session)
                 await self._inbounds(session)
+                auth_cache.set_cookies(
+                    auth_cache.cache_key("alireza", self.server),
+                    {c.key: c.value for c in session.cookie_jar},
+                )
             return True
-        except PanelError:
+        except PanelError as e:
+            self.last_error = str(e)
             return False

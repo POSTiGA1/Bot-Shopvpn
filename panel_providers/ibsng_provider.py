@@ -9,6 +9,7 @@ import time
 from datetime import datetime
 from html import unescape
 
+from . import auth_cache
 from ._http import new_session, request, load_json
 from .base import BasePanelProvider, PanelUserResult, PanelError, PanelUsernameTakenError
 
@@ -57,7 +58,7 @@ class IBSngProvider(BasePanelProvider):
         return self.server["api_url"].rstrip("/")
 
     def _session(self):
-        return new_session(headers={"User-Agent": "phpIBSng web Api"}, cookies=True)
+        return new_session(headers={"User-Agent": "phpIBSng web Api"}, cookies=True, server=self.server)
 
     async def _page(self, session, path: str, data: dict = None, params: dict = None) -> str:
         """پاسخ کامل (هدرها + بدنه)؛ مثل curl با HEADER=true و بدون دنبال‌کردن redirect."""
@@ -75,6 +76,19 @@ class IBSngProvider(BasePanelProvider):
         if "admin_index" not in page:
             raise PanelError("نام کاربری یا رمز عبور ادمین IBSng نادرست است.")
 
+    async def _authed_session(self):
+        """سشن جدید؛ در صورت وجود کوکی لاگینِ معتبر در کش از آن استفاده می‌شود
+        (بدون درخواست لاگین تکراری)، وگرنه لاگین واقعی انجام و کوکی کش می‌شود."""
+        session = self._session()
+        key = auth_cache.cache_key("ibsng", self.server)
+        cached = auth_cache.get_cookies(key)
+        if cached:
+            session.cookie_jar.update_cookies(cached)
+            return session
+        await self._login(session)
+        auth_cache.set_cookies(key, {c.key: c.value for c in session.cookie_jar})
+        return session
+
     async def _user_id(self, session, username: str):
         page = await self._page(session, "user/user_info.php", params={"normal_username_multi": username})
         if "does not exists" in page:
@@ -89,16 +103,15 @@ class IBSngProvider(BasePanelProvider):
         return name
 
     async def fetch_template_from_user(self, sample_username: str) -> dict:
-        async with self._session() as session:
-            await self._login(session)
+        async with await self._authed_session():
+            pass
         return {"group_ids": sample_username.strip(), "proxy_settings": {}}
 
     async def create_user(self, username: str, volume_gb: int, duration_days: int) -> PanelUserResult:
         group = self._group()
         owner = self.server["api_username"]
         password = secrets.token_hex(6)
-        async with self._session() as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             if await self._user_id(session, username):
                 raise PanelUsernameTakenError(f"نام کاربری «{username}» روی پنل تکراری است")
             page = await self._page(session, "user/add_new_users.php", {
@@ -129,8 +142,7 @@ class IBSngProvider(BasePanelProvider):
         return PanelUserResult(username=username, subscription_url=credentials_text(username, password), raw={})
 
     async def delete_user(self, username: str) -> bool:
-        async with self._session() as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             uid = await self._user_id(session, username)
             if not uid:
                 return False
@@ -148,8 +160,7 @@ class IBSngProvider(BasePanelProvider):
         return match.group(1).strip() if match else ""
 
     async def get_user(self, username: str) -> PanelUserResult:
-        async with self._session() as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             uid = await self._user_id(session, username)
             if not uid:
                 raise PanelError(f"کاربری با نام «{username}» روی پنل پیدا نشد.")
@@ -157,8 +168,7 @@ class IBSngProvider(BasePanelProvider):
         return PanelUserResult(username=username, subscription_url=credentials_text(username, password), raw={})
 
     async def get_user_usage(self, username: str) -> dict:
-        async with self._session() as session:
-            await self._login(session)
+        async with await self._authed_session() as session:
             page = await self._page(session, "user/user_info.php", params={"normal_username_multi": username})
         if "does not exists" in page:
             raise PanelError(f"کاربری با نام «{username}» روی پنل پیدا نشد.")
@@ -181,9 +191,15 @@ class IBSngProvider(BasePanelProvider):
         raise PanelError(_UNSUPPORTED)
 
     async def test_connection(self) -> bool:
+        """همیشه واقعاً لاگین می‌کند (نه از کش) تا واقعاً یوزر/پس فعلی را تست کند."""
         try:
             async with self._session() as session:
                 await self._login(session)
+                auth_cache.set_cookies(
+                    auth_cache.cache_key("ibsng", self.server),
+                    {c.key: c.value for c in session.cookie_jar},
+                )
             return True
-        except PanelError:
+        except PanelError as e:
+            self.last_error = str(e)
             return False

@@ -56,7 +56,7 @@ class WGDashboardProvider(BasePanelProvider):
         return self.server["api_url"].rstrip("/")
 
     def _session(self):
-        return new_session(headers={"wg-dashboard-apikey": self.server["api_password"], "Accept": "application/json"})
+        return new_session(headers={"wg-dashboard-apikey": self.server["api_password"], "Accept": "application/json"}, server=self.server)
 
     def _config(self) -> str:
         name = load_json(self.server["group_ids"])
@@ -243,5 +243,6 @@ class WGDashboardProvider(BasePanelProvider):
             async with self._session() as session:
                 await self._peers(session, config)
             return True
-        except PanelError:
+        except PanelError as e:
+            self.last_error = str(e)
             return False

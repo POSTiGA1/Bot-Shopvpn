@@ -23,6 +23,7 @@ import asyncio
 import aiohttp
 from datetime import datetime
 
+from . import auth_cache
 from .base import BasePanelProvider, PanelUserResult, PanelError, PanelUsernameTakenError
 
 _SECRET_FIELDS = {
@@ -55,10 +56,24 @@ def _expire_to_epoch(value):
 
 class MarzbanProvider(BasePanelProvider):
 
+    def _session(self) -> aiohttp.ClientSession:
+        return aiohttp.ClientSession(connector=self._build_connector())
+
     def _base_url(self) -> str:
         return self.server["api_url"].rstrip("/")
 
     async def _get_token(self, session: aiohttp.ClientSession) -> str:
+        """توکن را از کش می‌خواند (اگر معتبر باشد) تا لاگین تکراری روی هر
+        عملیات انجام نشود؛ فقط وقتی کش خالی/منقضی باشد واقعاً لاگین می‌کند."""
+        key = auth_cache.cache_key("marzban", self.server)
+        cached = auth_cache.get_token(key)
+        if cached:
+            return cached
+        token = await self._login(session)
+        auth_cache.set_token(key, token)
+        return token
+
+    async def _login(self, session: aiohttp.ClientSession) -> str:
         try:
             async with session.post(
                 f"{self._base_url()}/api/admin/token",
@@ -94,7 +109,7 @@ class MarzbanProvider(BasePanelProvider):
         خروجی در همان شکل PasarGuard (group_ids/proxy_settings) است تا با
         بقیه‌ی کد پروژه سازگار بماند؛ اینجا group_ids در واقع همان inbounds
         و proxy_settings همان proxies است."""
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             try:
                 async with session.get(
@@ -139,7 +154,7 @@ class MarzbanProvider(BasePanelProvider):
         }
         if start_on_first_use and duration_days:
             payload["on_hold_expire_duration"] = int(duration_days * 86400)
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             try:
                 async with session.post(
@@ -163,7 +178,7 @@ class MarzbanProvider(BasePanelProvider):
         return PanelUserResult(username=data.get("username", username), subscription_url=sub_url, raw=data)
 
     async def delete_user(self, username: str) -> bool:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             try:
                 async with session.delete(
@@ -176,7 +191,7 @@ class MarzbanProvider(BasePanelProvider):
                 raise PanelError(f"خطا در اتصال به پنل: {e or 'پاسخی از سرور در زمان مقرر دریافت نشد (timeout)'}") from e
 
     async def get_user_usage(self, username: str) -> dict:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             try:
                 async with session.get(
@@ -198,7 +213,7 @@ class MarzbanProvider(BasePanelProvider):
         }
 
     async def get_user(self, username: str) -> PanelUserResult:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             try:
                 async with session.get(
@@ -223,7 +238,7 @@ class MarzbanProvider(BasePanelProvider):
         """POST /api/user/{username}/revoke_sub: UUID/پسورد هر پروکسی کاربر را
         عوض می‌کند و لینک اشتراک تازه می‌سازد؛ data_limit/expire/مصرف فعلی
         دست‌نخورده می‌ماند (endpoint رسمی Marzban برای همین منظور)."""
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             headers = {"Authorization": f"Bearer {token}", "accept": "application/json"}
             try:
@@ -245,15 +260,18 @@ class MarzbanProvider(BasePanelProvider):
         return PanelUserResult(username=data.get("username", username), subscription_url=sub_url, raw=data)
 
     async def test_connection(self) -> bool:
+        """همیشه واقعاً لاگین می‌کند (نه از کش) تا واقعاً یوزر/پس فعلی را تست کند."""
         try:
-            async with aiohttp.ClientSession() as session:
-                await self._get_token(session)
+            async with self._session() as session:
+                token = await self._login(session)
+            auth_cache.set_token(auth_cache.cache_key("marzban", self.server), token)
             return True
-        except PanelError:
+        except PanelError as e:
+            self.last_error = str(e)
             return False
 
     async def set_enabled(self, username: str, enabled: bool) -> None:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             headers = {"Authorization": f"Bearer {token}", "accept": "application/json", "Content-Type": "application/json"}
             payload = {"status": "active" if enabled else "disabled"}
@@ -272,7 +290,7 @@ class MarzbanProvider(BasePanelProvider):
 
     async def update_user(self, username: str, add_volume_gb: float = 0, add_days: int = 0,
                            reset_usage: bool = False, preserve_remaining: bool = False) -> PanelUserResult:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             headers = {"Authorization": f"Bearer {token}", "accept": "application/json", "Content-Type": "application/json"}
             try:

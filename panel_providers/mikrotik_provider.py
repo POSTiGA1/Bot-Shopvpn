@@ -26,6 +26,7 @@ class MikroTikProvider(BasePanelProvider):
         return new_session(
             headers={"Content-Type": "application/json"},
             auth=aiohttp.BasicAuth(self.server["api_username"], self.server["api_password"]),
+            server=self.server,
         )
 
     async def _api(self, session, method: str, path: str, action: str, **kwargs):
@@ -128,5 +129,6 @@ class MikroTikProvider(BasePanelProvider):
             async with self._session() as session:
                 await self._api(session, "GET", "system/resource", "بررسی اتصال")
             return True
-        except PanelError:
+        except PanelError as e:
+            self.last_error = str(e)
             return False

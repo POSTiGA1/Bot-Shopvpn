@@ -5,8 +5,16 @@ Marzban، Marzneshin، X-UI و ...). هر provider جدید فقط باید ای
 (handlers_user.py, miniapp/server.py) فقط با همین اینترفیس کار می‌کند و از
 جزئیات API هر پنل بی‌خبر است.
 """
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+
+import aiohttp
+
+try:
+    from aiohttp_socks import ProxyConnector
+except ImportError:
+    ProxyConnector = None
 
 
 @dataclass
@@ -26,12 +34,38 @@ class PanelUsernameTakenError(PanelError):
     pass
 
 
+def build_connector(server, ssl: bool = False):
+    """کانکتور aiohttp برای اتصال به پنل: اگر روی این پنل یک پروکسی SOCKS
+    تنظیم شده باشد (ستون socks_proxy - برای پنل‌هایی که مستقیم از سرور بات
+    قابل‌اتصال نیستند، مثلاً پنل ایرانی پشت سرور خارجی)، از طریق آن پروکسی
+    وصل می‌شود؛ در غیر این صورت اتصال مستقیم معمولی."""
+    proxy = None
+    if server is not None:
+        try:
+            proxy = server["socks_proxy"]
+        except (KeyError, IndexError, TypeError):
+            proxy = None
+    if proxy:
+        if ProxyConnector is None:
+            raise PanelError(
+                "برای اتصال این پنل از طریق پروکسی SOCKS باید پکیج aiohttp_socks روی سرور نصب باشد."
+            )
+        return ProxyConnector.from_url(proxy, ssl=ssl)
+    return aiohttp.TCPConnector(ssl=ssl)
+
+
 class BasePanelProvider(ABC):
     """server: ردیف جدول panel_servers (sqlite3.Row) شامل api_url/api_username/
-    api_password/group_ids/proxy_settings/default_group"""
+    api_password/group_ids/proxy_settings/default_group/socks_proxy"""
+
+    supports_user_limit = False
+    last_error = ""
 
     def __init__(self, server):
         self.server = server
+
+    def _build_connector(self, ssl: bool = False):
+        return build_connector(self.server, ssl=ssl)
 
     @abstractmethod
     async def create_user(self, username: str, volume_gb: int, duration_days: int, start_on_first_use: bool = False) -> PanelUserResult:
@@ -82,6 +116,19 @@ class BasePanelProvider(ABC):
         """برای دکمه‌ی «تست اتصال» در پنل ادمین؛ فقط احراز هویت را چک می‌کند."""
         raise NotImplementedError
 
+    async def check_connection(self):
+        """(ok, error): مثل test_connection ولی علت دقیق شکست را هم برمی‌گرداند."""
+        self.last_error = ""
+        try:
+            ok = await self.test_connection()
+        except asyncio.TimeoutError:
+            return False, "پاسخی از سرور در زمان مقرر دریافت نشد (timeout)"
+        except Exception as e:
+            return False, (str(e) or type(e).__name__)[:300]
+        if ok:
+            return True, ""
+        return False, self.last_error or "اتصال یا احراز هویت ناموفق"
+
     async def set_enabled(self, username: str, enabled: bool) -> None:
         """کاربر را روی خودِ پنل فعال/غیرفعال می‌کند (بدون تغییر حجم/انقضا).
         پیاده‌سازی پیش‌فرض: پشتیبانی نمی‌شود؛ provider هایی که این قابلیت را
@@ -94,3 +141,11 @@ class BasePanelProvider(ABC):
         برمی‌گرداند (در غیر این صورت None، یعنی لینک قبلی هنوز معتبر است).
         پیاده‌سازی پیش‌فرض: پشتیبانی نمی‌شود."""
         raise PanelError("این نوع پنل از تغییر نام کاربر روی خودِ پنل پشتیبانی نمی‌کند.")
+
+    supports_online_status = False
+
+    async def is_client_online(self, username: str) -> bool:
+        """آیا کاربر همین الان به سرور متصل است (وصل=True/قطع=False).
+        پیاده‌سازی پیش‌فرض: پشتیبانی نمی‌شود؛ provider هایی که این قابلیت را
+        دارند این متد را override و supports_online_status را True می‌کنند."""
+        raise PanelError("این نوع پنل از استعلام وضعیت آنلاین لحظه‌ای پشتیبانی نمی‌کند.")

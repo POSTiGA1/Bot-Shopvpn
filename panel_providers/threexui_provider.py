@@ -73,6 +73,8 @@ from .base import BasePanelProvider, PanelUserResult, PanelError, PanelUsernameT
 
 
 class ThreeXUIProvider(BasePanelProvider):
+    supports_user_limit = True
+    supports_online_status = True
 
     def _base_url(self) -> str:
         return self.server["api_url"].rstrip("/")
@@ -85,7 +87,7 @@ class ThreeXUIProvider(BasePanelProvider):
         مثل mirzabot که در CurlRequest همه‌جا CURLOPT_SSL_VERIFYPEER را
         false می‌گذارد)، پس اینجا هم verify گواهی را غیرفعال می‌کنیم."""
         token = self.server["api_password"]
-        connector = aiohttp.TCPConnector(ssl=False)
+        connector = self._build_connector()
         return aiohttp.ClientSession(
             connector=connector,
             headers={
@@ -138,7 +140,7 @@ class ThreeXUIProvider(BasePanelProvider):
         legacy = self.server["xui_inbound_id"] if "xui_inbound_id" in self.server.keys() else None
         return [int(legacy)] if legacy else []
 
-    def _build_client(self, username: str, volume_gb: int, duration_days: int) -> tuple:
+    def _build_client(self, username: str, volume_gb: int, duration_days: int, user_limit: int = 0) -> tuple:
         """کلاینت را می‌سازد؛ خروجی: (client_dict, sub_id)
 
         نکته: چون این کلاینت ممکن است همزمان به چند inbound با پروتکل‌های
@@ -159,20 +161,21 @@ class ThreeXUIProvider(BasePanelProvider):
             "enable": True,
             "expiryTime": expiry_ms,
             "totalGB": data_limit_bytes,
-            "limitIp": 0,
+            "limitIp": int(user_limit or 0),
             "subId": sub_id,
             "tgId": 0,
         }
         return client, sub_id
 
-    async def create_user(self, username: str, volume_gb: int, duration_days: int, start_on_first_use: bool = False) -> PanelUserResult:
+    async def create_user(self, username: str, volume_gb: int, duration_days: int, start_on_first_use: bool = False,
+                           user_limit: int = 0) -> PanelUserResult:
         inbound_ids = self._inbound_ids()
         sub_base_url = self.server["xui_sub_base_url"]
         if not inbound_ids or not sub_base_url:
             raise PanelError("این سرور هنوز کامل تنظیم نشده (inbound یا آدرس Subscription خالی است).")
 
         async with self._session() as session:
-            client, sub_id = self._build_client(username, volume_gb, duration_days)
+            client, sub_id = self._build_client(username, volume_gb, duration_days, user_limit)
             payload = {"inboundIds": inbound_ids, "client": client}
             try:
                 async with session.post(f"{self._base_url()}/panel/api/clients/add", json=payload) as resp:
@@ -231,6 +234,26 @@ class ThreeXUIProvider(BasePanelProvider):
             "status": "active" if obj.get("enable") else "disabled",
             "expires_at": (expiry / 1000.0) if expiry > 10000 else None,
         }
+
+    async def is_client_online(self, username: str) -> bool:
+        """وضعیت آنلاین/آفلاین همین لحظه‌ی کاربر را از /panel/api/inbounds/onlines
+        می‌خواند (همان endpoint‌ای که در get_panel_stats برای شمارش کاربران آنلاین
+        استفاده می‌شود). این یک وضعیت لحظه‌ای است، نه تاریخچه‌ی آخرین اتصال."""
+        async with self._session() as session:
+            try:
+                async with session.post(f"{self._base_url()}/panel/api/inbounds/onlines") as resp:
+                    if resp.status in (401, 403):
+                        raise PanelError(f"خطا در احراز هویت (کد {resp.status}): API Token را بررسی کن.")
+                    if resp.status >= 400:
+                        text = await resp.text()
+                        raise PanelError(f"خطا در دریافت لیست آنلاین‌ها (کد {resp.status}): {text[:300]}")
+                    data = await resp.json()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                raise PanelError(f"خطا در اتصال به پنل: {e or 'پاسخی از سرور در زمان مقرر دریافت نشد (timeout)'}") from e
+        if data.get("success") is False:
+            raise PanelError(data.get("msg") or "دریافت لیست آنلاین‌ها ناموفق بود.")
+        online_emails = set(data.get("obj") or [])
+        return username in online_emails
 
     async def get_user(self, username: str) -> PanelUserResult:
         """API جدید clients/* یک GET تکی برای یک کلاینت ندارد؛ کلاینت داخل
@@ -332,7 +355,8 @@ class ThreeXUIProvider(BasePanelProvider):
             raise PanelError(f"خطا در اتصال به پنل (inbound {inbound_id}): {e or 'پاسخی از سرور در زمان مقرر دریافت نشد (timeout)'}") from e
 
     async def update_user(self, username: str, add_volume_gb: float = 0, add_days: int = 0,
-                           reset_usage: bool = False, preserve_remaining: bool = False) -> PanelUserResult:
+                           reset_usage: bool = False, preserve_remaining: bool = False,
+                           user_limit: int = None) -> PanelUserResult:
         sub_base_url = self.server["xui_sub_base_url"]
         used_bytes = 0
         if reset_usage and preserve_remaining and add_volume_gb:
@@ -375,6 +399,8 @@ class ThreeXUIProvider(BasePanelProvider):
                 updated_client["expiryTime"] = new_expiry
                 updated_client["totalGB"] = new_total
                 updated_client["enable"] = True
+                if user_limit is not None:
+                    updated_client["limitIp"] = int(user_limit)
 
                 await self._post_client_update(
                     session, username, inbound_id, updated_client, "بروزرسانی کاربر",
@@ -453,10 +479,124 @@ class ThreeXUIProvider(BasePanelProvider):
             async with self._session() as session:
                 async with session.get(f"{self._base_url()}/panel/api/inbounds/list") as resp:
                     if resp.status in (401, 403):
+                        self.last_error = f"احراز هویت پنل ناموفق بود (کد {resp.status})؛ نام کاربری و رمز را بررسی کنید."
                         return False
                     if resp.status >= 400:
+                        self.last_error = f"پاسخ پنل با کد {resp.status}؛ آدرس یا مسیر پنل را بررسی کنید."
                         return False
                     data = await resp.json()
-                    return bool(data.get("success", True))
-        except (aiohttp.ClientError, PanelError):
+                    if not data.get("success", True):
+                        self.last_error = "پنل پاسخ ناموفق (success=false) برگرداند."
+                        return False
+                    return True
+        except aiohttp.ClientError as e:
+            self.last_error = f"خطا در اتصال به پنل: {e}"
             return False
+        except PanelError as e:
+            self.last_error = str(e)
+            return False
+
+    async def backup_panel(self) -> tuple:
+        """دیتابیس sqlite پنل (x-ui.db) را از /panel/api/server/getDb دانلود می‌کند.
+        خروجی: (bytes دیتابیس, نام فایل پیشنهادی)."""
+        try:
+            async with self._session() as session:
+                async with session.get(f"{self._base_url()}/panel/api/server/getDb") as resp:
+                    if resp.status in (401, 403):
+                        raise PanelError(f"احراز هویت پنل ناموفق بود (کد {resp.status}).")
+                    if resp.status >= 400:
+                        raise PanelError(f"دریافت بکاپ ناموفق بود (کد {resp.status}).")
+                    data = await resp.read()
+                    if not data:
+                        raise PanelError("پنل فایل خالی برگرداند.")
+                    return data, "x-ui.db"
+        except aiohttp.ClientError as e:
+            raise PanelError(f"خطا در اتصال به پنل: {e}")
+
+    async def restore_panel(self, file_bytes: bytes) -> None:
+        """دیتابیس sqlite داده‌شده را با /panel/api/server/importDB جایگزین دیتابیس فعلی پنل
+        می‌کند (پنل بعد از این عملیات خودش Xray را ری‌استارت می‌کند).
+
+        نکته: این درخواست باید بدون هدر ثابت Content-Type: application/json سشن معمولی
+        ارسال شود (وگرنه aiohttp نمی‌تواند Content-Type چندبخشی/boundary خودش را
+        جایگزین کند)، پس اینجا یک سشن جداگانه فقط با هدر Authorization ساخته می‌شود."""
+        token = self.server["api_password"]
+        connector = self._build_connector()
+        try:
+            async with aiohttp.ClientSession(
+                connector=connector,
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as session:
+                form = aiohttp.FormData()
+                form.add_field("db", file_bytes, filename="x-ui.db", content_type="application/octet-stream")
+                async with session.post(f"{self._base_url()}/panel/api/server/importDB", data=form) as resp:
+                    if resp.status in (401, 403):
+                        raise PanelError(f"احراز هویت پنل ناموفق بود (کد {resp.status}).")
+                    if resp.status >= 400:
+                        raise PanelError(f"بازیابی ناموفق بود (کد {resp.status}).")
+                    try:
+                        data = await resp.json()
+                    except (aiohttp.ContentTypeError, ValueError):
+                        return
+                    if isinstance(data, dict) and not data.get("success", True):
+                        raise PanelError(data.get("msg") or "پنل پاسخ ناموفق برگرداند.")
+        except aiohttp.ClientError as e:
+            raise PanelError(f"خطا در اتصال به پنل: {e}")
+
+    async def get_panel_stats(self) -> dict:
+        """آمار کلی پنل: تعداد inbound، کل کاربران، آنلاین‌ها، منقضی‌شده‌ها و غیرفعال‌شده‌ها.
+        از /panel/api/inbounds/list (که clientStats هر inbound را هم برمی‌گرداند) و
+        /panel/api/inbounds/onlines (لیست ایمیل کاربران آنلاین) خوانده می‌شود."""
+        try:
+            async with self._session() as session:
+                async with session.get(f"{self._base_url()}/panel/api/inbounds/list") as resp:
+                    if resp.status in (401, 403):
+                        raise PanelError(f"احراز هویت پنل ناموفق بود (کد {resp.status}).")
+                    if resp.status >= 400:
+                        raise PanelError(f"دریافت اطلاعات پنل ناموفق بود (کد {resp.status}).")
+                    data = await resp.json()
+                if data.get("success") is False:
+                    raise PanelError(data.get("msg") or "دریافت اطلاعات inbound ناموفق بود.")
+                inbounds = data.get("obj") or []
+
+                online_emails = set()
+                try:
+                    async with session.post(f"{self._base_url()}/panel/api/inbounds/onlines") as resp2:
+                        if resp2.status < 400:
+                            data2 = await resp2.json()
+                            if data2.get("success", True):
+                                online_emails = set(data2.get("obj") or [])
+                except (aiohttp.ClientError, asyncio.TimeoutError):
+                    pass
+        except aiohttp.ClientError as e:
+            raise PanelError(f"خطا در اتصال به پنل: {e}")
+
+        now_ms = int(time.time() * 1000)
+        seen_emails = set()
+        total_clients = 0
+        expired_clients = 0
+        disabled_clients = 0
+        online_count = 0
+        for ib in inbounds:
+            for c in (ib.get("clientStats") or []):
+                email = c.get("email")
+                if not email or email in seen_emails:
+                    continue
+                seen_emails.add(email)
+                total_clients += 1
+                if not c.get("enable", True):
+                    disabled_clients += 1
+                expiry = c.get("expiryTime") or 0
+                if expiry and expiry < now_ms:
+                    expired_clients += 1
+                if email in online_emails:
+                    online_count += 1
+
+        return {
+            "inbound_count": len(inbounds),
+            "total_clients": total_clients,
+            "online_clients": online_count,
+            "expired_clients": expired_clients,
+            "disabled_clients": disabled_clients,
+        }

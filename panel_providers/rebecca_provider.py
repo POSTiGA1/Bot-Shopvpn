@@ -15,7 +15,7 @@ class RebeccaProvider(BasePanelProvider):
         return new_session(headers={
             "Authorization": f"Bearer {self.server['api_password']}",
             "Accept": "application/json",
-        })
+        }, server=self.server)
 
     async def _call(self, session, method: str, path: str, action: str, not_found_ok: bool = False, **kwargs):
         status, data, text = await request_json(session, method, f"{self._base()}/api/{path}", **kwargs)
@@ -142,5 +142,6 @@ class RebeccaProvider(BasePanelProvider):
             async with self._session() as session:
                 await self._call(session, "GET", "system", "بررسی اتصال")
             return True
-        except PanelError:
+        except PanelError as e:
+            self.last_error = str(e)
             return False

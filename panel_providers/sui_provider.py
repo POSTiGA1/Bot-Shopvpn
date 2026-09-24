@@ -41,7 +41,7 @@ class SUIProvider(BasePanelProvider):
         return self.server["api_url"].rstrip("/")
 
     def _session(self):
-        return new_session(headers={"Token": self.server["api_password"], "Accept": "application/json"})
+        return new_session(headers={"Token": self.server["api_password"], "Accept": "application/json"}, server=self.server)
 
     async def _api(self, session, method: str, path: str, action: str, **kwargs) -> dict:
         status, data, text = await request_json(session, method, f"{self._base()}/apiv2/{path}", **kwargs)
@@ -189,5 +189,6 @@ class SUIProvider(BasePanelProvider):
             async with self._session() as session:
                 await self._api(session, "GET", "settings", "بررسی اتصال")
             return True
-        except PanelError:
+        except PanelError as e:
+            self.last_error = str(e)
             return False

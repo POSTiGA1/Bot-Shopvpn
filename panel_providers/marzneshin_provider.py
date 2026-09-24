@@ -25,15 +25,30 @@ import datetime
 import asyncio
 import aiohttp
 
+from . import auth_cache
 from .base import BasePanelProvider, PanelUserResult, PanelError, PanelUsernameTakenError
 
 
 class MarzneshinProvider(BasePanelProvider):
 
+    def _session(self) -> aiohttp.ClientSession:
+        return aiohttp.ClientSession(connector=self._build_connector())
+
     def _base_url(self) -> str:
         return self.server["api_url"].rstrip("/")
 
     async def _get_token(self, session: aiohttp.ClientSession) -> str:
+        """توکن را از کش می‌خواند (اگر معتبر باشد) تا لاگین تکراری روی هر
+        عملیات انجام نشود؛ فقط وقتی کش خالی/منقضی باشد واقعاً لاگین می‌کند."""
+        key = auth_cache.cache_key("marzneshin", self.server)
+        cached = auth_cache.get_token(key)
+        if cached:
+            return cached
+        token = await self._login(session)
+        auth_cache.set_token(key, token)
+        return token
+
+    async def _login(self, session: aiohttp.ClientSession) -> str:
         try:
             async with session.post(
                 f"{self._base_url()}/api/admins/token",
@@ -58,7 +73,7 @@ class MarzneshinProvider(BasePanelProvider):
         """service_ids کاربر نمونه‌ی موجود روی پنل را می‌خواند و به‌عنوان قالب
         برمی‌گرداند (در ستون group_ids ذخیره می‌شود؛ proxy_settings برای این
         پنل استفاده نمی‌شود)."""
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             try:
                 async with session.get(
@@ -104,7 +119,7 @@ class MarzneshinProvider(BasePanelProvider):
             payload["expire_date"] = expire_dt.strftime("%Y-%m-%dT%H:%M:%S")
         else:
             payload["expire_strategy"] = "never"  # بدون انقضا
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             try:
                 async with session.post(
@@ -128,7 +143,7 @@ class MarzneshinProvider(BasePanelProvider):
         return PanelUserResult(username=data.get("username", username), subscription_url=sub_url, raw=data)
 
     async def delete_user(self, username: str) -> bool:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             try:
                 async with session.delete(
@@ -141,7 +156,7 @@ class MarzneshinProvider(BasePanelProvider):
                 raise PanelError(f"خطا در اتصال به پنل: {e or 'پاسخی از سرور در زمان مقرر دریافت نشد (timeout)'}") from e
 
     async def get_user_usage(self, username: str) -> dict:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             try:
                 async with session.get(
@@ -163,7 +178,7 @@ class MarzneshinProvider(BasePanelProvider):
         }
 
     async def get_user(self, username: str) -> PanelUserResult:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             try:
                 async with session.get(
@@ -193,7 +208,7 @@ class MarzneshinProvider(BasePanelProvider):
         (جمع‌بسته: /api/users/... به‌جای /api/user/...) قیاس شده و مستقیماً
         روی یک نصب واقعی Marzneshin تست نشده - قبل از استفاده‌ی جدی حتماً
         روی یک کاربر تستی امتحان شود."""
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             headers = {"Authorization": f"Bearer {token}", "accept": "application/json"}
             try:
@@ -215,15 +230,18 @@ class MarzneshinProvider(BasePanelProvider):
         return PanelUserResult(username=data.get("username", username), subscription_url=sub_url, raw=data)
 
     async def test_connection(self) -> bool:
+        """همیشه واقعاً لاگین می‌کند (نه از کش) تا واقعاً یوزر/پس فعلی را تست کند."""
         try:
-            async with aiohttp.ClientSession() as session:
-                await self._get_token(session)
+            async with self._session() as session:
+                token = await self._login(session)
+            auth_cache.set_token(auth_cache.cache_key("marzneshin", self.server), token)
             return True
-        except PanelError:
+        except PanelError as e:
+            self.last_error = str(e)
             return False
 
     async def set_enabled(self, username: str, enabled: bool) -> None:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             headers = {"Authorization": f"Bearer {token}", "accept": "application/json", "Content-Type": "application/json"}
             payload = {"status": "active" if enabled else "disabled"}
@@ -244,7 +262,7 @@ class MarzneshinProvider(BasePanelProvider):
         """مرزنشین هم endpoint رسمی برای تغییر username ندارد؛ کاربر با
         همان service_ids/data_limit/expire ولی نام تازه ساخته می‌شود و کاربر
         قدیمی حذف می‌شود. لینک اشتراک تازه را برمی‌گرداند."""
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             headers = {"Authorization": f"Bearer {token}", "accept": "application/json", "Content-Type": "application/json"}
             try:
@@ -303,7 +321,7 @@ class MarzneshinProvider(BasePanelProvider):
 
     async def update_user(self, username: str, add_volume_gb: float = 0, add_days: int = 0,
                            reset_usage: bool = False, preserve_remaining: bool = False) -> PanelUserResult:
-        async with aiohttp.ClientSession() as session:
+        async with self._session() as session:
             token = await self._get_token(session)
             headers = {"Authorization": f"Bearer {token}", "accept": "application/json", "Content-Type": "application/json"}
             try:

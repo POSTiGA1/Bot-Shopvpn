@@ -4,15 +4,16 @@ import json
 
 import aiohttp
 
-from .base import PanelError
+from .base import PanelError, build_connector
 
 TIMEOUT = aiohttp.ClientTimeout(total=20)
 
 
-def new_session(headers=None, cookies=False, auth=None) -> aiohttp.ClientSession:
-    """سشن بدون بررسی SSL؛ cookies=True برای پنل‌های لاگین‌محور."""
+def new_session(headers=None, cookies=False, auth=None, server=None) -> aiohttp.ClientSession:
+    """سشن بدون بررسی SSL؛ cookies=True برای پنل‌های لاگین‌محور.
+    اگر server داده شود و پروکسی ساکس داشته باشد، اتصال از طریق آن برقرار می‌شود."""
     return aiohttp.ClientSession(
-        connector=aiohttp.TCPConnector(ssl=False),
+        connector=build_connector(server),
         headers=headers,
         timeout=TIMEOUT,
         cookie_jar=aiohttp.CookieJar(unsafe=True) if cookies else None,
