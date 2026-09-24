@@ -101,6 +101,8 @@ DEFAULT_SETTINGS = {
     "btn_referral": "🤝 زیرمجموعه‌گیری من",
     "btn_wallet": "👛 کیف پول من",
     "btn_admin_panel": "⚙️ پنل مدیریت",
+    "btn_tutorial": "📚 آموزش اتصال",
+    "tutorial_menu_enabled": "1",
     "test_enabled": "1",
     # F14: پاکسازی خودکار سرویس‌های منقضی. صفر یعنی خاموش.
     "expired_delete_days": "0",
@@ -399,11 +401,13 @@ MENU_BUTTON_META = {
     # بقیه‌ی دکمه‌ها متن/رنگ قابل تنظیم و در چیدمان منو قابل جابجایی است.
     "btn_reseller_panel": {"label": "دکمه پنل نمایندگی", "toggle_key": None, "admin_only": False, "has_text": True, "has_style": True, "default_text": "🧑‍💼 پنل نمایندگی"},
     "btn_reseller_tiers": {"label": "دکمه درخواست نمایندگی", "toggle_key": "reseller_request_enabled", "admin_only": False, "has_text": True, "has_style": True, "default_text": "🤝 نمایندگی"},
+    "btn_tutorial": {"label": "دکمه آموزش اتصال", "toggle_key": "tutorial_menu_enabled", "admin_only": False, "has_text": True, "has_style": True, "default_text": "📚 آموزش اتصال"},
 }
 # دکمه‌های داخل «حساب کاربری» و صفحه‌ی جزئیات هر سرویس: هرکدام با یک تنظیم
 # جدا فعال/غیرفعال می‌شوند (پیش‌فرض همه فعال). کلید -> (برچسب برای ادمین، مقدار پیش‌فرض)
 ACCOUNT_TOGGLE_KEYS = [
     ("acct_show_orders", "📦 نمایش «سرویس‌ها و سفارش‌های من»", "1"),
+    ("acct_show_tutorial", "📚 نمایش «آموزش اتصال»", "1"),
     ("acct_show_referral", "🤝 نمایش «زیرمجموعه‌گیری من»", "1"),
     ("acct_show_wallet", "👛 نمایش «کیف پول من»", "1"),
     ("svc_show_renew_full", "🛠 دکمه «تمدید کامل سرویس»", "1"),
@@ -447,10 +451,11 @@ DEFAULT_PAYMENT_METHOD_ORDER = ["card", "card_auto", "abangateway", "blupal", "n
 
 ACCOUNT_HUB_META = {
     "acct_orders": {"label": "سرویس‌ها و سفارش‌های من", "default_text": "📦 سرویس‌ها و سفارش‌های من"},
+    "acct_tutorial": {"label": "آموزش اتصال", "default_text": "📚 آموزش اتصال"},
     "acct_referral": {"label": "زیرمجموعه‌گیری من", "default_text": "🤝 زیرمجموعه‌گیری من"},
     "acct_wallet": {"label": "کیف پول من", "default_text": "👛 کیف پول من"},
 }
-DEFAULT_ACCOUNT_HUB_ORDER = ["acct_orders", "acct_referral", "acct_wallet"]
+DEFAULT_ACCOUNT_HUB_ORDER = ["acct_orders", "acct_tutorial", "acct_referral", "acct_wallet"]
 
 BUYFLOW_META = {
     "btn_custom_config": {"label": "ساخت کانفیگ شخصی", "default_text": "🛠 ساخت کانفیگ شخصی"},
@@ -471,7 +476,7 @@ DEFAULT_SETTINGS.update({key: default for key, _label, default in ACCOUNT_TOGGLE
 
 DEFAULT_MENU_ORDER = [
     "miniapp", "btn_reseller_panel", "btn_reseller_tiers", "btn_buy", "btn_test",
-    "btn_my_orders", "btn_referral", "btn_wheel", "btn_contact", "btn_admin_panel",
+    "btn_my_orders", "btn_tutorial", "btn_referral", "btn_wheel", "btn_contact", "btn_admin_panel",
 ]
 
 
