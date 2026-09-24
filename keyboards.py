@@ -955,24 +955,39 @@ def contact_reply_kb(user_tg_id) -> InlineKeyboardMarkup:
 TICKET_STATUS_LABELS = {"open": "🟢 باز", "answered": "🟡 پاسخ داده‌شده", "closed": "🔴 بسته‌شده"}
 
 
+SUPPORT_CONTACT_METHODS = [
+    ("ai_support_enabled", "🤖 دستیار هوشمند"),
+    ("support_direct_enabled", "✉️ پیام مستقیم"),
+    ("support_ticket_new_enabled", "🎫 ثبت تیکت جدید"),
+    ("support_ticket_mine_enabled", "📂 تیکت‌های من"),
+    ("support_admin_chat_enabled", "👤 چت مستقیم با مدیر"),
+]
+
+
+def support_method_enabled(db, key: str) -> bool:
+    return db.get_setting(key, "1") == "1"
+
+
 def contact_menu_kb(db) -> InlineKeyboardMarkup:
-    """منوی اصلی بخش «ارتباط با پشتیبانی»: پیام مستقیم، تیکت و در صورت تنظیم‌بودن
-    آیدی مدیر، یک دکمه‌ی لینک برای باز شدن مستقیم پی‌وی او."""
+    """منوی «ارتباط با پشتیبانی»؛ هر روش را ادمین جداگانه فعال/غیرفعال می‌کند."""
     rows = []
-    if db.get_setting("ai_support_enabled", "1") == "1":
+    if support_method_enabled(db, "ai_support_enabled"):
         import ai_support
         if ai_support.is_configured(db):
             rows.append([InlineKeyboardButton(text="🤖 دستیار هوشمند (پاسخ آنی)", callback_data="contact_ai")])
-    rows += [
-        [InlineKeyboardButton(text="✉️ پیام مستقیم به پشتیبانی", callback_data="contact_direct")],
-        [InlineKeyboardButton(text="🎫 ثبت تیکت جدید", callback_data="tickets_new")],
-        [InlineKeyboardButton(text="📂 تیکت‌های من", callback_data="tickets_mine")],
-    ]
+    if support_method_enabled(db, "support_direct_enabled"):
+        rows.append([InlineKeyboardButton(text="✉️ پیام مستقیم به پشتیبانی", callback_data="contact_direct")])
+    if support_method_enabled(db, "support_ticket_new_enabled"):
+        rows.append([InlineKeyboardButton(text="🎫 ثبت تیکت جدید", callback_data="tickets_new")])
+    if support_method_enabled(db, "support_ticket_mine_enabled"):
+        rows.append([InlineKeyboardButton(text="📂 تیکت‌های من", callback_data="tickets_mine")])
     support_admin_id = (db.get_setting("support_admin_id") or "").strip()
-    if support_admin_id.lstrip("-").isdigit():
+    if support_method_enabled(db, "support_admin_chat_enabled") and support_admin_id.lstrip("-").isdigit():
         rows.append(
             [InlineKeyboardButton(text="👤 چت مستقیم با مدیر", url=f"tg://user?id={support_admin_id}")]
         )
+    if not rows:
+        rows.append([InlineKeyboardButton(text="در حال حاضر هیچ روش ارتباطی فعال نیست.", callback_data="noop")])
     rows.append([InlineKeyboardButton(text="❌ انصراف", callback_data="cancel_flow")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1175,15 +1190,18 @@ def admin_ticket_view_kb(ticket_id: int, status: str, active_status: str) -> Inl
 
 
 def support_contact_settings_kb(db) -> InlineKeyboardMarkup:
-    """منوی پنل مدیریت برای تنظیم آیدی عددی تلگرام مدیر که در بخش ارتباط با
-    پشتیبانی، دکمه‌ی «چت مستقیم با مدیر» به پی‌وی همان آیدی باز می‌شود."""
+    """فعال/غیرفعال‌کردن روش‌های ارتباط با پشتیبانی + تنظیم آیدی مدیر برای چت مستقیم."""
     current_id = (db.get_setting("support_admin_id") or "").strip() or "-"
-    rows = [
+    rows = []
+    for key, label in SUPPORT_CONTACT_METHODS:
+        icon = "🟢" if support_method_enabled(db, key) else "🔴"
+        rows.append([InlineKeyboardButton(text=f"{icon} {label}", callback_data=f"adm_support_toggle:{key}")])
+    rows += [
         [InlineKeyboardButton(text=f"🆔 آیدی فعلی: {current_id}", callback_data="noop")],
         [InlineKeyboardButton(text="✏️ تغییر آیدی مدیر", callback_data="adm_set_support_contact_edit")],
     ]
     if current_id != "-":
-        rows.append([InlineKeyboardButton(text="🗑 حذف (غیرفعال کردن دکمه)", callback_data="adm_clear_support_contact")])
+        rows.append([InlineKeyboardButton(text="🗑 حذف آیدی مدیر", callback_data="adm_clear_support_contact")])
     rows.append([InlineKeyboardButton(text="⬅️ بازگشت", callback_data="adm_cat:access")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1259,7 +1277,7 @@ ADMIN_PANEL_ITEMS = [
     ("adm_spam_settings", "🛡 ضداسپم کاربران", "adm_spam_settings"),
     ("adm_gswitch", "🔌 سوئیچ سراسری ربات (خاموش/روشن)", "adm_gswitch"),
     ("adm_temp_message", "⏳ پیام موقت (خودحذف‌شونده)", "adm_temp_message"),
-    ("adm_set_support_contact", "🆔 آیدی مدیر برای چت مستقیم", "adm_set_support_contact"),
+    ("adm_set_support_contact", "📞 روش‌های ارتباط با پشتیبانی", "adm_set_support_contact"),
     ("adm_ai_support_settings", "🤖 دستیار هوشمند (سوالات متداول)", "adm_ai_support_settings"),
 ]
 

@@ -35,6 +35,7 @@ from config import MAX_TEST_PER_USER, RESELLER_DBS_DIR, resolve_db_path, DB_PATH
 from database import Database, DuplicateBotTokenError
 from config_delivery import deliver_config_to_user, send_individual_configs, build_qr_bytes
 from renewal_engine import execute_renewal, RenewalError
+import renewal_log
 from temp_messages import schedule_message_autodelete
 from force_join import is_channel_member, CHECK_CALLBACK
 from sub_info import fetch_sub_info, format_sub_info_fa, fetch_individual_links
@@ -4474,17 +4475,21 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
         # دارد (تمدید حجم/زمان بر اساس نرخ ثابت است، نه قیمت یک محصول واقعی،
         # پس معنای «کد تخفیف روی محصول» را ندارد).
         if mode == "full":
+            renew_warning = ""
+            if target_kind == "custom":
+                renew_warning = renewal_log.warning_text(await renewal_log.service_snapshot(db, item["custom"]))
             await state.update_data(
                 renew_full_ctx={
                     "cb_id": cb_id, "target_kind": target_kind, "target_id": target_id,
                     "add_volume": add_volume, "add_days": add_days, "price": price,
                     "product_label": product_label, "product_id": product["id"], "user_limit": users or None,
+                    "warning": renew_warning,
                 },
                 renew_full_discount_code_id=None, renew_full_discount_amount=0, renew_full_discount_label=None,
             )
             await _safe_edit(
                 call.message,
-                _renewal_full_confirm_text(product_label, price),
+                _renewal_full_confirm_text(product_label, price, warning=renew_warning),
                 reply_markup=kb.renewal_full_confirm_kb(db, cb_id),
             )
             return
@@ -4500,11 +4505,13 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
             add_volume, add_days, price, product_label, state, edit_fn, send_fn, call.bot, user_limit=users or None,
         )
 
-    def _renewal_full_confirm_text(product_label: str, base_price: int, discount_amount: int = 0, discount_label: str = "") -> str:
+    def _renewal_full_confirm_text(product_label: str, base_price: int, discount_amount: int = 0, discount_label: str = "", warning: str = "") -> str:
         text = db.get_text(
             "handlers_user.renewal.full_confirm_header",
             "🔄 تمدید کامل سرویس - {product_label}\n💰 مبلغ قابل پرداخت: {price} تومان\n",
         ).format(product_label=product_label, price=f"{base_price:,}")
+        if warning:
+            text += "\n" + warning
         if discount_amount > 0:
             text += db.get_text(
                 "handlers_user.product.discount_code_line",
@@ -4565,7 +4572,7 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
         await state.set_state(None)
         await message.answer(
             db.get_text("handlers_user.discount.applied_title", "✅ کد تخفیف اعمال شد!") + "\n\n" +
-            _renewal_full_confirm_text(ctx["product_label"], base_price, discount_amount, code_row["code"]),
+            _renewal_full_confirm_text(ctx["product_label"], base_price, discount_amount, code_row["code"], ctx.get("warning", "")),
             reply_markup=kb.renewal_full_confirm_kb(db, ctx["cb_id"]),
         )
 
@@ -6718,6 +6725,9 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
 
     @router.callback_query(F.data == "contact_direct")
     async def cb_contact_direct(call: CallbackQuery, state: FSMContext):
+        if not kb.support_method_enabled(db, "support_direct_enabled"):
+            await call.answer(db.get_text('handlers_user.support_method_disabled', 'این روش ارتباطی در حال حاضر غیرفعال است.'), show_alert=True)
+            return
         await state.set_state(ContactFlow.waiting_message)
         await _safe_edit(
             call.message, (await asyncio.to_thread(db.get_setting, "contact_text")), reply_markup=kb.cancel_kb()
@@ -7358,6 +7368,9 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
 
     @router.callback_query(F.data == "tickets_new")
     async def cb_tickets_new(call: CallbackQuery, state: FSMContext):
+        if not kb.support_method_enabled(db, "support_ticket_new_enabled"):
+            await call.answer(db.get_text('handlers_user.support_method_disabled', 'این روش ارتباطی در حال حاضر غیرفعال است.'), show_alert=True)
+            return
         departments = await asyncio.to_thread(db.list_ticket_departments, True)
         await state.set_state(TicketFlow.waiting_department)
         await _safe_edit(call.message, db.get_text('handlers_user.auto_4a8dbe38', '🧩 لطفاً بخش مرتبط با درخواست خود را انتخاب کنید:'), reply_markup=kb.ticket_departments_kb(departments))
@@ -7429,6 +7442,9 @@ def create_user_router(db, is_main_bot: bool = True, bot_manager=None) -> Router
 
     @router.callback_query(F.data == "tickets_mine")
     async def cb_tickets_mine(call: CallbackQuery, state: FSMContext):
+        if not kb.support_method_enabled(db, "support_ticket_mine_enabled"):
+            await call.answer(db.get_text('handlers_user.support_method_disabled', 'این روش ارتباطی در حال حاضر غیرفعال است.'), show_alert=True)
+            return
         await state.clear()
         tickets = (await asyncio.to_thread(db.get_user_tickets, call.from_user.id))
         await _safe_edit(call.message, db.get_text('handlers_user.auto_362322f8', '📂 تیکت\u200cهای شما:'), reply_markup=kb.tickets_list_kb(tickets))

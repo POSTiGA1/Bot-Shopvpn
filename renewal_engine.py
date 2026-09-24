@@ -11,6 +11,7 @@ abangateway_payment.finalize_paid_order صدا زده می‌شود).
 
 from panel_providers import get_provider, PanelError
 from user_limit import provider_kwargs
+import renewal_log
 
 
 class RenewalError(Exception):
@@ -47,9 +48,11 @@ async def execute_renewal(db, order) -> str:
             except PanelError as e:
                 raise RenewalError(str(e)) from e
             db.set_custom_config_user_limit(cc["id"], renewal_users)
+            renewal_log.notify(db, order, cc["display_name"] or cc["username"])
             return f"✅ تعداد کاربر همزمان سرویس شما به {renewal_users} افزایش یافت."
         try:
             provider = get_provider(server)
+            before = await renewal_log.service_snapshot(db, cc, provider)
             await provider.update_user(
                 cc["username"], add_volume_gb=add_volume, add_days=add_days, reset_usage=(mode == "full"),
                 preserve_remaining=(mode == "full"), **provider_kwargs(provider, renewal_users),
@@ -66,12 +69,15 @@ async def execute_renewal(db, order) -> str:
         )
         if renewal_users and getattr(provider, "supports_user_limit", False):
             db.set_custom_config_user_limit(cc["id"], renewal_users)
+        updated = db.get_custom_config_owned(cc["id"], order["user_id"]) or cc
+        renewal_log.notify(db, order, cc["display_name"] or cc["username"], before, updated, provider)
         return "✅ سرویس شما با موفقیت تمدید شد."
 
     if kind == "config":
         new_expiry = db.extend_pool_config_expiry(target_id, order["user_id"], add_days)
         if not new_expiry:
             raise RenewalError("این سرویس دیگر یافت نشد (شاید قبلاً حذف شده).")
+        renewal_log.notify(db, order, "کانفیگ بانک")
         return "✅ سرویس شما با موفقیت تمدید شد."
 
     raise RenewalError("نوع سرویس برای تمدید نامعتبر است.")

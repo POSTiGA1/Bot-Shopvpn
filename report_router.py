@@ -17,6 +17,7 @@ DEFAULT_TOPIC = "other"
 TOPICS = {
     "purchase": "🛒 خرید",
     "service": "🛠 سرویس",
+    "renewal": "🔄 تمدید",
     "test": "🧪 تست",
     "finance": "💰 مالی",
     "error": "🚨 خطا",

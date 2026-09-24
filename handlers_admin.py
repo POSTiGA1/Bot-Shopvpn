@@ -10375,16 +10375,34 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
     # تنظیم آیدی مدیر برای چت مستقیم (بخش ارتباط با پشتیبانی)
     # -------------------------------------------------------------------
 
+    SUPPORT_METHODS_HEADER = "📞 روش‌های ارتباط با پشتیبانی\n\nهر روش را برای فعال/غیرفعال‌کردن لمس کنید. دکمه‌ی چت مستقیم فقط وقتی نمایش داده می‌شود که آیدی مدیر تنظیم شده باشد:"
+
     @router.callback_query(F.data == "adm_set_support_contact")
     async def cb_admin_set_support_contact(call: CallbackQuery):
         if not full_admin_only(call.from_user.id):
             return await deny_support(call)
         await replace_admin_view(
             call,
-            "🆔 تنظیم آیدی مدیر برای دکمه‌ی «چت مستقیم با مدیر» (در بخش ارتباط با پشتیبانی کاربران):",
+            SUPPORT_METHODS_HEADER,
             reply_markup=kb.support_contact_settings_kb(db),
         )
         await call.answer()
+
+    @router.callback_query(F.data.startswith("adm_support_toggle:"))
+    async def cb_admin_support_toggle(call: CallbackQuery):
+        if not full_admin_only(call.from_user.id):
+            return await deny_support(call)
+        key = call.data.split(":", 1)[1]
+        if key not in {k for k, _label in kb.SUPPORT_CONTACT_METHODS}:
+            await call.answer(db.get_text('handlers_admin.auto_e905b152', 'کلید نامعتبر.'), show_alert=True)
+            return
+        new_value = "0" if kb.support_method_enabled(db, key) else "1"
+        await asyncio.to_thread(db.set_setting, key, new_value)
+        await asyncio.to_thread(
+            db.log_admin_action, call.from_user.id, "support_contact_toggle", f"{key}={new_value}"
+        )
+        await safe_edit(call, SUPPORT_METHODS_HEADER, reply_markup=kb.support_contact_settings_kb(db))
+        await call.answer(db.get_text('handlers_admin.auto_d5ebb39c', 'وضعیت تغییر کرد.'))
 
     @router.callback_query(F.data == "adm_set_support_contact_edit")
     async def cb_admin_set_support_contact_edit(call: CallbackQuery, state: FSMContext):
@@ -10416,11 +10434,7 @@ def create_admin_router(db, is_main_bot: bool = True, bot_manager=None) -> Route
         if not full_admin_only(call.from_user.id):
             return await deny_support(call)
         (await asyncio.to_thread(db.set_setting, "support_admin_id", ""))
-        await safe_edit(
-            call,
-            db.get_text('handlers_admin.auto_7804185e', '🆔 تنظیم آیدی مدیر برای دکمه\u200cی «چت مستقیم با مدیر» (در بخش ارتباط با پشتیبانی کاربران):'),
-            reply_markup=kb.support_contact_settings_kb(db),
-        )
+        await safe_edit(call, SUPPORT_METHODS_HEADER, reply_markup=kb.support_contact_settings_kb(db))
         await call.answer(db.get_text('handlers_admin.auto_f349f7a2', '✅ حذف شد.'))
 
     # -------------------------------------------------------------------
