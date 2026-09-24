@@ -126,6 +126,10 @@ DEFAULT_SETTINGS = {
     # آیدی عددی تلگرام مدیر برای دکمه‌ی «چت مستقیم با مدیر» در بخش ارتباط با
     # پشتیبانی (از طریق لینک tg://user?id=... بدون نیاز به یوزرنیم عمومی باز می‌شود).
     "support_admin_id": "",
+    "support_direct_enabled": "1",
+    "support_ticket_new_enabled": "1",
+    "support_ticket_mine_enabled": "1",
+    "support_admin_chat_enabled": "1",
     "ticket_intro_text": "لطفاً موضوع تیکت را در یک خط ارسال کنید:",
     # دستیار پشتیبانی هوش مصنوعی (Gemini) - در صورت خالی بودن GEMINI_API_KEY
     # در .env، این بخش حتی اگر "1" باشد غیرفعال می‌ماند.
