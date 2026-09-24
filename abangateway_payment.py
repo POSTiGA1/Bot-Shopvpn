@@ -7,14 +7,16 @@
 نکته درباره‌ی مبلغ: بقیه‌ی پروژه مبالغ را به «تومان» نگه می‌دارد؛ API آبان گیت وی
 مبلغ را به «ریال» می‌خواهد (۱ تومان = ۱۰ ریال). تبدیل این‌جا انجام می‌شود.
 
-نکته درباره‌ی وب‌هوک: مستندات رسمی آبان گیت وی قالب دقیق بدنه‌ی وب‌هوک (و مکانیزم
-امضای آن) را مشخص نکرده است. به همین دلیل، این ماژول به بدنه‌ی وب‌هوک اعتماد نمی‌کند؛
-فقط از آن برای پیدا کردن invoice_id استفاده می‌کند و سپس با فراخوانی مستقیم API
-(با کلید API خودمان که بدنه‌ی وب‌هوک نمی‌تواند جعل کند) وضعیت واقعی فاکتور را
-استعلام و سپس verify می‌کند. تابع try_verify_and_finalize منبع حقیقت است و هم از
+نکته درباره‌ی وب‌هوک: اگر کلید مخفی وب‌هوک تنظیم شده باشد، هدر X-Signature
+(HMAC-SHA256 روی بایت‌های خام بدنه) چک می‌شود. با این حال این ماژول به محتوای بدنه
+اعتماد نمی‌کند؛ فقط از آن برای پیدا کردن invoice_id استفاده می‌کند و سپس با
+فراخوانی مستقیم API (با کلید API خودمان) وضعیت واقعی فاکتور را استعلام و سپس
+verify می‌کند. تابع try_verify_and_finalize منبع حقیقت است و هم از
 مسیر وب‌هوک و هم از مسیر «بررسی دستی وضعیت» در بات صدا زده می‌شود.
 """
 
+import hashlib
+import hmac
 import logging
 
 from config import ABANGATEWAY_API_KEY, API_BASE_URL
@@ -47,6 +49,14 @@ def resolve_api_key_source(db) -> str:
     if ABANGATEWAY_API_KEY:
         return "env"
     return "none"
+
+
+def verify_webhook_signature(raw_body: bytes, sent_signature: str, secret: str) -> bool:
+    """امضای HMAC-SHA256 وب‌هوک آبان گیت وی را روی بایت‌های خام بدنه بررسی می‌کند."""
+    if not secret or not sent_signature:
+        return False
+    expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, sent_signature.strip())
 
 
 def abangateway_payment_available(db) -> bool:
@@ -168,9 +178,8 @@ from payment_delivery import finalize_paid_order, finalize_paid_topup  # noqa: F
 
 
 def extract_invoice_id_from_webhook(body: dict) -> str:
-    """چون قالب دقیق بدنه‌ی وب‌هوک آبان گیت وی در مستندات مشخص نشده، چند نام فیلد
-    محتمل را امتحان می‌کنیم. خودِ محتوای بدنه هرگز به‌عنوان منبع حقیقتِ وضعیت پرداخت
-    استفاده نمی‌شود (نگاه کن به try_verify_and_finalize) - فقط برای پیدا کردن شناسه است."""
+    """شناسه‌ی فاکتور را از بدنه‌ی وب‌هوک درمی‌آورد. بدنه هرگز منبع حقیقتِ وضعیت
+    پرداخت نیست (نگاه کن به try_verify_and_finalize)."""
     for key in ("invoice_id", "id", "invoiceId", "invoice"):
         val = body.get(key)
         if val:

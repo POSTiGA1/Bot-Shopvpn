@@ -14,7 +14,7 @@ import logging
 import asyncio
 import aiohttp
 
-ABANGATEWAY_BASE_URL = "https://abangateway.ir/api/v1"
+ABANGATEWAY_BASE_URL = "https://api.abangateway.ir/api/v1"
 logger = logging.getLogger("abangateway")
 
 
